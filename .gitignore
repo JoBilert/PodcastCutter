@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+output_trimmed.mp3
+*_transcript_cache.json
+.venv/
+venv/
+.DS_Store
