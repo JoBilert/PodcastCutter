@@ -5,4 +5,6 @@ output_trimmed.mp3
 *_transcript_cache.json
 .venv/
 venv/
+.env
 .DS_Store
+start.bat.log
