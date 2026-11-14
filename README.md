@@ -6,6 +6,9 @@ Alle Verarbeitungsschritte laufen lokal (Transkription via openai-whisper).
 Die LLM-Analyse erfolgt über eine beliebige OpenAI-kompatible API (NVIDIA NIM, OpenAI,
 OpenRouter, lokale Unsloth/vLLM oder eigene API).
 
+## Disclaimer
+Der gesamte Softwarecode wurde mit Nemotron 3.5 Super VL 120B A12B und Hermes Agent geschrieben.
+
 ## Schnellstart (Windows)
 
 1. Laden Sie dieses Repository herunter (oder klonen Sie es).
@@ -83,17 +86,6 @@ PodcastCutter/
 ├── input_dialog.mp3     # Platzhalter-Audio (muss vom Nutzer bereitgestellt werden)
 ├── .gitignore           # Git-Ausschlussregeln
 └── .env                 # Konfiguration (wird bei erstem Lauf erstellt, NICHT ins Repository commiten)
-```
-
-## Git-Branches
-
-*   `master` – Lokale Arbeitsversion (kann `.env` mit API-Key enthalten)
-*   `clean-setup` – Saubere Version ohne API-Geheimnisse, mit erstmaligem Setup-Flow. `.env` ist im `.gitignore` und wird nicht committet.
-
-Branch wechseln:
-```bash
-git checkout clean-setup   # Saubere Version ohne Secrets
-git checkout master        # Lokale Version
 ```
 
 ## Credits & Lizenzen
