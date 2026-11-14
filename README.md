@@ -105,3 +105,22 @@ Branch wechseln:
 git checkout clean-setup   # Saubere Version ohne Secrets
 git checkout master        # Lokale Version
 ```
+
+## Credits & Lizenzen
+
+Dieses Projekt nutzt folgende Bibliotheken und Systeme:
+
+| Komponente | Lizenz | Quelle |
+|------------|--------|--------|
+| Python | [Python Software Foundation License](https://docs.python.org/3/license.html) | https://python.org |
+| openai-whisper | [MIT License](https://github.com/openai/whisper/blob/main/LICENSE) | https://github.com/openai/whisper |
+| pydub | [MIT License](https://github.com/jiaaro/pydub/blob/master/LICENSE) | https://github.com/jiaaro/pydub |
+| gradio | [Apache License 2.0](https://github.com/gradio-app/gradio/blob/main/LICENSE) | https://github.com/gradio-app/gradio |
+| ffmpeg | [GNU General Public License v2+](https://ffmpeg.org/legal.html) | https://ffmpeg.org |
+| NVIDIA NIM API | NVIDIA Terms of Service (proprietär) | https://build.nvidia.com/nim |
+| OpenAI API | OpenAI Terms of Service (proprietär) | https://openai.com/policies/terms-of-use |
+| OpenRouter API | OpenRouter Terms of Service (proprietär) | https://openrouter.ai |
+
+Dieses Projekt steht unter der MIT License. Siehe [LICENSE](LICENSE) für Details (falls vorhanden).
+
+**Hinweis:** Die Nutzung von Cloud-APIs (NVIDIA NIM, OpenAI, OpenRouter) unterliegt den jeweiligen Nutzungsbedingungen des Anbieters und kann kostenpflichtig sein. Die lokale Transkription via `openai-whisper` läuft vollständig offline auf Ihrer eigenen Hardware.
