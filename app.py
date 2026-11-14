@@ -1,12 +1,16 @@
 # app.py
 """
 PodcastCutter GUI — Gradio-Interface für lokale Audio-Transkription,
-LLM-basierte Themenanalyse (Unsloth/vLLM) und Benutzer-gesteuerten Audio-Schnitt.
+LLM-basierte Themenanalyse (NVIDIA NIM) und Benutzer-gesteuerten Audio-Schnitt.
 
-Alle Verarbeitungsschritte laufen lokal. Es werden keine Online-Dienste benötigt.
+Alle Verarbeitungsschritte laufen lokal (Transkription via openai-whisper).
+Die LLM-Analyse erfolgt über die NVIDIA NIM API (Cloud).
 
 Start:
     python3 app.py
+
+Erstlauf:
+    Richten Sie in Tab "0. Einrichtung" Ihre NVIDIA NIM API-Zugangsdaten ein.
 """
 
 import os
@@ -19,43 +23,77 @@ import whisper
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# Standard-Konfiguration (kann über die GUI überschrieben werden)
+# Pfade & Konfigurationsdatei
 # ---------------------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+KEY_FILE = os.path.join(BASE_DIR, ".env")
+
+# Standardwerte (werden aus .env überschrieben, falls vorhanden)
 DEFAULT_THEME = "Suchbegriff hier eingeben"
-DEFAULT_LLM_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
-DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
+DEFAULT_LLM_MODEL = ""
+DEFAULT_BASE_URL = ""
+DEFAULT_API_KEY = ""
+DEFAULT_OUTPUT_AUDIO = os.path.join(BASE_DIR, "output_trimmed.mp3")
+DEFAULT_OUTPUT_TRANSCRIPT = os.path.join(BASE_DIR, "transcript_cache.json")
 USE_LOCAL_UNSLOTH = False
-OUTPUT_TRIMMED = "output_trimmed.mp3"
-
-KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 
 
-def load_key():
-    """Lädt den gespeicherten API-Key aus der .env-Datei (falls vorhanden)."""
+# ---------------------------------------------------------------------------
+# Konfiguration laden / speichern
+# ---------------------------------------------------------------------------
+def load_config():
+    """Lädt Konfiguration aus .env-Datei. Gibt dict mit allen Keys zurück."""
+    config = {
+        "NIM_API_KEY": "",
+        "NIM_BASE_URL": "",
+        "NIM_LLM_MODEL": "",
+        "OUTPUT_AUDIO": DEFAULT_OUTPUT_AUDIO,
+        "OUTPUT_TRANSCRIPT": DEFAULT_OUTPUT_TRANSCRIPT,
+    }
     if os.path.exists(KEY_FILE):
         try:
-            with open(KEY_FILE, "r") as f:
+            with open(KEY_FILE, "r", encoding="utf-8") as f:
                 for line in f:
+                    line = line.strip()
                     if line.startswith("NIM_API_KEY="):
-                        return line.strip().split("=", 1)[1]
+                        config["NIM_API_KEY"] = line.split("=", 1)[1]
+                    elif line.startswith("NIM_BASE_URL="):
+                        config["NIM_BASE_URL"] = line.split("=", 1)[1]
+                    elif line.startswith("NIM_LLM_MODEL="):
+                        config["NIM_LLM_MODEL"] = line.split("=", 1)[1]
+                    elif line.startswith("OUTPUT_AUDIO="):
+                        config["OUTPUT_AUDIO"] = line.split("=", 1)[1]
+                    elif line.startswith("OUTPUT_TRANSCRIPT="):
+                        config["OUTPUT_TRANSCRIPT"] = line.split("=", 1)[1]
         except Exception:
             pass
-    return ""
+    return config
 
 
-def save_key(key):
-    """Speichert den API-Key in der .env-Datei (nur für den aktuellen User lesbar)."""
-    if not key:
-        return
+def save_config(api_key, base_url, llm_model, output_audio, output_transcript):
+    """Speichert Konfiguration in .env-Datei (nur für aktuellen User lesbar)."""
+    lines = [
+        f"NIM_API_KEY={api_key}",
+        f"NIM_BASE_URL={base_url}",
+        f"NIM_LLM_MODEL={llm_model}",
+        f"OUTPUT_AUDIO={output_audio}",
+        f"OUTPUT_TRANSCRIPT={output_transcript}",
+    ]
     try:
-        with open(KEY_FILE, "w") as f:
-            f.write(f"NIM_API_KEY={key}\n")
+        with open(KEY_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
         os.chmod(KEY_FILE, 0o600)
-    except Exception:
-        pass
+        return True, "Konfiguration gespeichert in .env"
+    except Exception as e:
+        return False, f"Fehler beim Speichern: {e}"
 
 
-DEFAULT_API_KEY = load_key()
+def config_exists():
+    """Prüft, ob .env existiert und einen API-Key enthält."""
+    if not os.path.exists(KEY_FILE):
+        return False
+    cfg = load_config()
+    return bool(cfg["NIM_API_KEY"].strip())
 
 
 # ---------------------------------------------------------------------------
@@ -98,10 +136,10 @@ def transcribe_audio(audio_path: str, model_size: str = "base", language: str = 
 
 
 # ---------------------------------------------------------------------------
-# 2. LLM-Analyse (lokal über Unsloth/vLLM API)
+# 2. LLM-Analyse (NVIDIA NIM API)
 # ---------------------------------------------------------------------------
 def analyze_transcript(segments, theme, llm_model, base_url, api_key, use_local):
-    """Sucht mit dem LLM (lokal über Unsloth) nach thematisch relevanten Passagen."""
+    """Sucht mit dem LLM (NVIDIA NIM API) nach thematisch relevanten Passagen."""
     full_text = "\n".join(
         f"[{seg['start']:.2f}s - {seg['end']:.2f}s]: {seg['text']}"
         for seg in segments
@@ -205,7 +243,7 @@ Antworte NUR mit einem gültigen JSON-Objekt, das ein Feld "relevant_passages" e
 # ---------------------------------------------------------------------------
 # 3. Audio-Schnitt
 # ---------------------------------------------------------------------------
-def trim_audio(audio_path: str, relevant_passages: list, output_path: str = OUTPUT_TRIMMED):
+def trim_audio(audio_path: str, relevant_passages: list, output_path: str):
     """Schneidet den Audio-Track auf die markierten Timecodes zu."""
     audio = AudioSegment.from_mp3(audio_path)
     sorted_passages = sorted(relevant_passages, key=lambda x: x["start"])
@@ -256,16 +294,71 @@ def format_passages(passages):
 # Gradio-App
 # ---------------------------------------------------------------------------
 def build_demo():
+    cfg = load_config()
+    configured = config_exists()
+
     with gr.Blocks(title="PodcastCutter") as demo:
         gr.Markdown("# ✂️ PodcastCutter")
         gr.Markdown("Lokale Audio-Transkription, LLM-Themenanalyse und benutzergesteuerter Schnitt. "
-                    "Alles läuft offline auf deinem Rechner.")
+                    "Transkription läuft lokal via openai-whisper; LLM-Analyse über NVIDIA NIM API.")
 
-        # --- Zuständige State-Variablen ------------------------------------
+        # --- Zustand ---------------------------------------------------------
         state_audio_path = gr.State(None)
         state_segments = gr.State(None)
         state_passages = gr.State(None)
         state_theme = gr.State(DEFAULT_THEME)
+        state_config = gr.State(cfg)
+
+        # =====================================================================
+        # TAB 0: Einrichtung (Erstlauf)
+        # =====================================================================
+        with gr.Tab("0. 🔧 Einrichtung" if not configured else "0. ✅ Einrichtung"):
+            gr.Markdown("## Erste Einrichtung")
+            if not configured:
+                gr.Markdown("""
+### NVIDIA NIM API-Zugang einrichten
+
+1. Gehen Sie auf https://build.nvidia.com/nim und erstellen Sie ein Konto.
+2. Suchen Sie nach einem LLM-Modell (z. B. `nemotron-3.5-super-vl-120b-a12b` oder `nemotron-3.5-lightning-30b-a3b`).
+3. Erstellen Sie einen API-Key unter "API Keys" in Ihrem NVIDIA NIM Dashboard.
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".
+""")
+                with gr.Row():
+                    setup_api_key = gr.Textbox(
+                        label="NVIDIA NIM API Key",
+                        type="password",
+                        placeholder="nvapi-...",
+                    )
+                    setup_base_url = gr.Textbox(
+                        label="Base URL",
+                        value="https://integrate.api.nvidia.com/v1",
+                        placeholder="https://integrate.api.nvidia.com/v1",
+                    )
+                    setup_llm_model = gr.Textbox(
+                        label="LLM-Modell",
+                        placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b",
+                    )
+                with gr.Row():
+                    setup_output_audio = gr.Textbox(
+                        label="Ausgabe-Ordner/Datei für geschnittenes MP3",
+                        value=DEFAULT_OUTPUT_AUDIO,
+                        placeholder="/pfad/zum/ausgabe.mp3",
+                    )
+                    setup_output_transcript = gr.Textbox(
+                        label="Ausgabe-Datei für Transkript-Cache",
+                        value=DEFAULT_OUTPUT_TRANSCRIPT,
+                        placeholder="/pfad/zum/transkript.json",
+                    )
+                setup_save_btn = gr.Button("💾 Konfiguration speichern", variant="primary")
+                setup_status = gr.Markdown("")
+            else:
+                gr.Markdown("""
+Ihre Konfiguration ist bereits gespeichert (`.env`). Sie können das Programm jetzt nutzen.
+Falls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei direkt oder löschen Sie sie und starten Sie das Programm neu.
+""")
+                with gr.Row():
+                    show_cfg_btn = gr.Button("📋 Konfiguration anzeigen")
+                cfg_display = gr.Markdown("")
 
         # --- Tab 1: Einstellungen & Verarbeitung ---------------------------
         with gr.Tab("1. Einstellungen & Datei"):
@@ -279,15 +372,17 @@ def build_demo():
             with gr.Row():
                 llm_model_input = gr.Textbox(
                     label="LLM-Modell",
-                    value=DEFAULT_LLM_MODEL,
+                    value=cfg["NIM_LLM_MODEL"],
+                    placeholder="z.B. nvidia/nemotron-3.5-super-vl-120b-a12b",
                 )
                 base_url_input = gr.Textbox(
-                    label="Unsloth/vLLM Base URL",
-                    value=DEFAULT_BASE_URL,
+                    label="NVIDIA NIM Base URL",
+                    value=cfg["NIM_BASE_URL"],
+                    placeholder="https://integrate.api.nvidia.com/v1",
                 )
                 api_key_input = gr.Textbox(
                     label="NVIDIA NIM API Key",
-                    value=DEFAULT_API_KEY,
+                    value=cfg["NIM_API_KEY"],
                     type="password",
                     placeholder="nvapi-...",
                 )
@@ -323,7 +418,40 @@ def build_demo():
             audio_output = gr.Audio(label="Geschnittener Podcast", type="filepath")
             download_info = gr.Markdown("")
 
-        # --- Callbacks ------------------------------------------------------
+        # --- Callbacks -------------------------------------------------------
+        def do_setup(api_key, base_url, llm_model, output_audio, output_transcript):
+            if not api_key or not base_url or not llm_model:
+                return gr.update(value="❌ Bitte füllen Sie alle Pflichtfelder aus (API Key, Base URL, Modell).")
+            ok, msg = save_config(api_key, base_url, llm_model, output_audio, output_transcript)
+            if ok:
+                return gr.update(value=f"✅ {msg}\nSie können jetzt zu Tab '1. Einstellungen & Datei' wechseln und das Programm nutzen.")
+            else:
+                return gr.update(value=f"❌ {msg}")
+
+        def show_configuration():
+            c = load_config()
+            return gr.update(value=f"""
+Aktuelle Konfiguration:
+- API Key: {'✅ gesetzt' if c['NIM_API_KEY'] else '❌ nicht gesetzt'}
+- Base URL: {c['NIM_BASE_URL'] or 'nicht gesetzt'}
+- Modell: {c['NIM_LLM_MODEL'] or 'nicht gesetzt'}
+- Audio-Ausgabe: {c['OUTPUT_AUDIO']}
+- Transkript-Cache: {c['OUTPUT_TRANSCRIPT']}
+""")
+
+        if not configured:
+            setup_save_btn.click(
+                fn=do_setup,
+                inputs=[setup_api_key, setup_base_url, setup_llm_model,
+                        setup_output_audio, setup_output_transcript],
+                outputs=[setup_status],
+            )
+        else:
+            show_cfg_btn.click(
+                fn=show_configuration,
+                outputs=[cfg_display],
+            )
+
         def on_process(audio_file, theme, llm_model, base_url, api_key, use_local):
             save_key(api_key)
             if audio_file is None:
@@ -341,14 +469,13 @@ def build_demo():
                     gr.update(visible=False),
                     gr.update(visible=False),
                     gr.update(visible=False),
-                    gr.update(visible=False),
                 )
 
             # Transkription (lokal)
             segments, language = transcribe_audio(audio_file.name)
             transcript_text = format_transcript(segments)
 
-            # LLM-Analyse (lokal über Unsloth)
+            # LLM-Analyse (NVIDIA NIM)
             passages = analyze_transcript(
                 segments, theme, llm_model, base_url, api_key, use_local
             )
@@ -378,7 +505,8 @@ def build_demo():
                         gr.update(visible=False),
                         "Fehler: Keine Audio-Datei oder keine Passagen vorhanden.",
                     )
-                out_path = trim_audio(audio_path, passages)
+                out_path = cfg["OUTPUT_AUDIO"]
+                trim_audio(audio_path, passages, out_path)
                 return (
                     gr.update(value=out_path, visible=True),
                     f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out_path}",
@@ -421,7 +549,7 @@ def build_demo():
                 effective_theme,
             )
 
-        # --- Verkabelung ----------------------------------------------------
+        # --- Verkabelung -----------------------------------------------------
         process_btn.click(
             fn=on_process,
             inputs=[audio_upload, theme_input, llm_model_input,
