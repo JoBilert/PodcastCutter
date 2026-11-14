@@ -8,11 +8,11 @@ Alle Verarbeitungsschritte laufen lokal (Transkription via openai-whisper).
 Die LLM-Analyse erfolgt über eine konfigurierbare API (NVIDIA NIM, OpenAI,
 OpenRouter, lokale Unsloth/vLLM oder eigene API).
 
+Mehrsprachig: Zwei vollständige Oberflächen (Deutsch / English) werden über
+gr.TabbedInterface bereitgestellt. Einfacher Wechsel zwischen den Sprachen.
+
 Start:
     python3 app.py
-
-Erstlauf:
-    Richten Sie in Tab "0. Einrichtung" Ihre API-Zugangsdaten ein.
 """
 
 import os
@@ -25,194 +25,13 @@ import whisper
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# Übersetzungsystem (DE / EN)
-# ---------------------------------------------------------------------------
-
-TR = {
-    "de": {
-        "app_title": "✂️ PodcastCutter",
-        "app_subtitle": "Lokale Audio-Transkription, LLM-Themenanalyse und benutzergesteuerter Schnitt. Transkription läuft lokal via openai-whisper; LLM-Analyse über eine konfigurierbare API.",
-        "lang_label": "Sprache / Language",
-        "tab_setup": "0. 🔧 Einrichtung",
-        "tab_setup_done": "0. ✅ Einrichtung",
-        "tab_settings": "1. Einstellungen & Datei",
-        "tab_results": "2. Ergebnisse & Bestätigung",
-        "tab_cut": "3. Schnitt & Download",
-        "setup_title": "## Erste Einrichtung",
-        "setup_intro": "### API-Anbieter auswählen und Zugangsdaten eingeben\n\nWählen Sie den LLM-Anbieter aus, den Sie für die Themenanalyse verwenden möchten. Unterstützt werden alle OpenAI-kompatiblen APIs.",
-        "setup_provider": "API-Anbieter",
-        "setup_provider_info": "Welche LLM-API möchten Sie verwenden?",
-        "setup_api_key": "API Key",
-        "setup_api_key_ph": "nvapi-... oder sk-...",
-        "setup_base_url": "Base URL",
-        "setup_base_url_ph": "https://integrate.api.nvidia.com/v1",
-        "setup_model": "LLM-Modell",
-        "setup_model_ph": "z. B. nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "setup_out_audio": "Ausgabe-Datei für geschnittenes MP3",
-        "setup_out_audio_ph": "/pfad/zum/ausgabe.mp3",
-        "setup_out_transcript": "Ausgabe-Datei für Transkript-Cache",
-        "setup_out_transcript_ph": "/pfad/zum/transkript.json",
-        "setup_save": "💾 Konfiguration speichern",
-        "setup_save_ok": "✅ Konfiguration gespeichert in .env\nSie können jetzt zu Tab '1. Einstellungen & Datei' wechseln und das Programm nutzen.",
-        "setup_save_err": "❌ Bitte füllen Sie alle Pflichtfelder aus (API Key, Base URL, Modell).",
-        "setup_configured": "Ihre Konfiguration ist bereits gespeichert (`.env`). Sie können das Programm jetzt nutzen.\nFalls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei direkt oder löschen Sie sie und starten Sie das Programm neu.",
-        "setup_show_cfg": "📋 Konfiguration anzeigen",
-        "setup_cfg_title": "Aktuelle Konfiguration:",
-        "setup_cfg_provider": "- Anbieter: {}",
-        "setup_cfg_key_ok": "- API Key: ✅ gesetzt",
-        "setup_cfg_key_no": "- API Key: ❌ nicht gesetzt",
-        "setup_cfg_base_url": "- Base URL: {}",
-        "setup_cfg_model": "- Modell: {}",
-        "setup_cfg_out_audio": "- Audio-Ausgabe: {}",
-        "setup_cfg_out_transcript": "- Transkript-Cache: {}",
-        "setup_help_nim": "### NVIDIA NIM API-Zugang einrichten\n\n1. Gehen Sie auf https://build.nvidia.com/nim und erstellen Sie ein Konto.\n2. Suchen Sie nach einem LLM-Modell (z. B. `nemotron-3.5-super-vl-120b-a12b` oder `nemotron-3.5-lightning-30b-a3b`).\n3. Erstellen Sie einen API-Key unter \"API Keys\" in Ihrem NVIDIA NIM Dashboard.\n4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf \"Konfiguration speichern\".",
-        "setup_help_openai": "### OpenAI API-Zugang einrichten\n\n1. Gehen Sie auf https://platform.openai.com und erstellen Sie ein Konto.\n2. Erstellen Sie einen API-Key unter \"API Keys\" in Ihrem OpenAI Dashboard.\n3. Wählen Sie ein Modell (z. B. `gpt-4o-mini`, `gpt-4o`).\n4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf \"Konfiguration speichern\".",
-        "setup_help_openrouter": "### OpenRouter API-Zugang einrichten\n\n1. Gehen Sie auf https://openrouter.ai und erstellen Sie ein Konto.\n2. Erstellen Sie einen API-Key unter \"Keys\" in Ihrem OpenRouter Dashboard.\n3. Wählen Sie ein Modell aus dem OpenRouter Model-Katalog.\n4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf \"Konfiguration speichern\".",
-        "setup_help_unsloth": "### Lokale Unsloth/vLLM API einrichten\n\n1. Starten Sie einen lokalen Unsloth/vLLM-Server, z. B.:\n   `python -m unsloth.vllm.server --model unsloth/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8888`\n2. Tragen Sie die Base URL (Standard: `http://127.0.0.1:8888/v1`) ein.\n3. Tragen Sie den Modellnamen ein (wie beim Serverstart angegeben).\n4. Der API-Key kann für lokale Server meist leer bleiben oder \"not-needed\" sein.\n5. Klicken Sie auf \"Konfiguration speichern\".",
-        "setup_help_custom": "### Eigene API einrichten\n\nTragen Sie Base URL, API-Key und Modellname manuell ein.\nDie API muss das OpenAI-kompatible Chat-Completions-Format unterstützen:\n`POST {base_url}/chat/completions` mit JSON-Body `{model, messages, temperature}`.",
-        "t1_audio": "Podcast-Datei (MP3/WAV)",
-        "t1_theme": "Thema für LLM-Suche",
-        "t1_theme_ph": "z.B. Buddhismus und Mitgefühl",
-        "t1_provider": "API-Anbieter",
-        "t1_model": "LLM-Modell",
-        "t1_model_ph": "z.B. nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "t1_base_url": "Base URL",
-        "t1_base_url_ph": "https://integrate.api.nvidia.com/v1",
-        "t1_api_key": "API Key",
-        "t1_api_key_ph": "nvapi-... oder sk-...",
-        "t1_use_local": "Lokale Unsloth-API verwenden (statt OpenAI Cloud)",
-        "t1_process": "🚀 Transkribieren & Analysieren",
-        "t2_transcript": "Vollständiges Transkript (mit Zeitcodes)",
-        "t2_passages": "Relevante Passagen (markiert)",
-        "t2_confirm": "✅ Schnitt bestätigen",
-        "t2_reject": "❌ Nicht zustimmen / Feedback",
-        "t2_feedback": "Feedback (was soll verbessert werden?)",
-        "t2_feedback_ph": "z.B. 'Zu wenig Fokus auf Karma' oder 'Passagen 3 & 5 sind zu lang'",
-        "t2_retry": "🔄 Mit Feedback erneut analysieren",
-        "t3_audio": "Geschnittener Podcast",
-        "msg_upload": "Bitte laden Sie zuerst eine Audio-Datei hoch.",
-        "msg_no_data": "Fehler: Keine Audio-Datei oder keine Passagen vorhanden.",
-        "msg_success": "✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {}",
-        "msg_cut_error": "Fehler beim Schnitt: {}",
-        "msg_http": "HTTP-Fehler {} bei der API ({}): {}",
-        "msg_conn": "Verbindungsabbruch (Versuch {}/{}): {}. Warte 5 Sekunden und versuche erneut...",
-        "msg_conn_final": "VERBINDUNGSFEHLER bei der API ({}): {}",
-        "msg_api_err": "FEHLER während der API-Anfrage: {}",
-        "msg_json": "FEHLER: LLM gab ungültiges JSON zurück.",
-        "msg_raw": "Rohantwort: {}",
-        "msg_no_pass": "FEHLER: LLM gab kein erwartetes 'relevant_passages' Array zurück. Antwort: {}",
-        "passage_rel": "(Relevanz: {}/10)",
-        "passage_sum": "→ {}",
-        "err_no_passages": "Keine Passagen zum Schneiden vorhanden.",
-        "prov_nim": "NVIDIA NIM",
-        "prov_openai": "OpenAI",
-        "prov_openrouter": "OpenRouter",
-        "prov_unsloth": "Unsloth / vLLM (lokal)",
-        "prov_custom": "Eigene / andere API",
-    },
-    "en": {
-        "app_title": "✂️ PodcastCutter",
-        "app_subtitle": "Local audio transcription, LLM-based topic analysis and user-controlled editing. Transcription runs locally via openai-whisper; LLM analysis via a configurable API.",
-        "lang_label": "Sprache / Language",
-        "tab_setup": "0. 🔧 Setup",
-        "tab_setup_done": "0. ✅ Setup",
-        "tab_settings": "1. Settings & File",
-        "tab_results": "2. Results & Confirmation",
-        "tab_cut": "3. Cut & Download",
-        "setup_title": "## First-Time Setup",
-        "setup_intro": "### Select API provider and enter credentials\n\nChoose the LLM provider you want to use for topic analysis. All OpenAI-compatible APIs are supported.",
-        "setup_provider": "API Provider",
-        "setup_provider_info": "Which LLM API do you want to use?",
-        "setup_api_key": "API Key",
-        "setup_api_key_ph": "nvapi-... or sk-...",
-        "setup_base_url": "Base URL",
-        "setup_base_url_ph": "https://integrate.api.nvidia.com/v1",
-        "setup_model": "LLM Model",
-        "setup_model_ph": "e.g. nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "setup_out_audio": "Output file for cut MP3",
-        "setup_out_audio_ph": "/path/to/output.mp3",
-        "setup_out_transcript": "Output file for transcript cache",
-        "setup_out_transcript_ph": "/path/to/transcript.json",
-        "setup_save": "💾 Save Configuration",
-        "setup_save_ok": "✅ Configuration saved to .env\nYou can now switch to Tab '1. Settings & File' and use the program.",
-        "setup_save_err": "❌ Please fill in all required fields (API Key, Base URL, Model).",
-        "setup_configured": "Your configuration is already saved (`.env`). You can now use the program.\nTo change settings, edit the `.env` file directly or delete it and restart the program.",
-        "setup_show_cfg": "📋 Show Configuration",
-        "setup_cfg_title": "Current Configuration:",
-        "setup_cfg_provider": "- Provider: {}",
-        "setup_cfg_key_ok": "- API Key: ✅ set",
-        "setup_cfg_key_no": "- API Key: ❌ not set",
-        "setup_cfg_base_url": "- Base URL: {}",
-        "setup_cfg_model": "- Model: {}",
-        "setup_cfg_out_audio": "- Audio Output: {}",
-        "setup_cfg_out_transcript": "- Transcript Cache: {}",
-        "setup_help_nim": "### NVIDIA NIM API Setup\n\n1. Go to https://build.nvidia.com/nim and create an account.\n2. Search for an LLM model (e.g. `nemotron-3.5-super-vl-120b-a12b` or `nemotron-3.5-lightning-30b-a3b`).\n3. Create an API Key under \"API Keys\" in your NVIDIA NIM Dashboard.\n4. Enter Key, Base URL and Model name here. Click \"Save Configuration\".",
-        "setup_help_openai": "### OpenAI API Setup\n\n1. Go to https://platform.openai.com and create an account.\n2. Create an API Key under \"API Keys\" in your OpenAI Dashboard.\n3. Select a model (e.g. `gpt-4o-mini`, `gpt-4o`).\n4. Enter Key, Base URL and Model name here. Click \"Save Configuration\".",
-        "setup_help_openrouter": "### OpenRouter API Setup\n\n1. Go to https://openrouter.ai and create an account.\n2. Create an API Key under \"Keys\" in your OpenRouter Dashboard.\n3. Select a model from the OpenRouter Model Catalog.\n4. Enter Key, Base URL and Model name here. Click \"Save Configuration\".",
-        "setup_help_unsloth": "### Local Unsloth/vLLM API Setup\n\n1. Start a local Unsloth/vLLM server, e.g.:\n   `python -m unsloth.vllm.server --model unsloth/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8888`\n2. Enter the Base URL (default: `http://127.0.0.1:8888/v1`).\n3. Enter the model name (as specified at server start).\n4. The API key can usually be left empty or set to \"not-needed\" for local servers.\n5. Click \"Save Configuration\".",
-        "setup_help_custom": "### Custom API Setup\n\nEnter Base URL, API Key and Model name manually.\nThe API must support the OpenAI-compatible Chat Completions format:\n`POST {base_url}/chat/completions` with JSON body `{model, messages, temperature}`.",
-        "t1_audio": "Podcast File (MP3/WAV)",
-        "t1_theme": "Topic for LLM Search",
-        "t1_theme_ph": "e.g. Buddhism and Compassion",
-        "t1_provider": "API Provider",
-        "t1_model": "LLM Model",
-        "t1_model_ph": "e.g. nvidia/nemotron-3.5-super-vl-120b-a12b",
-        "t1_base_url": "Base URL",
-        "t1_base_url_ph": "https://integrate.api.nvidia.com/v1",
-        "t1_api_key": "API Key",
-        "t1_api_key_ph": "nvapi-... or sk-...",
-        "t1_use_local": "Use local Unsloth API (instead of OpenAI Cloud)",
-        "t1_process": "🚀 Transcribe & Analyze",
-        "t2_transcript": "Full Transcript (with Timecodes)",
-        "t2_passages": "Relevant Passages (marked)",
-        "t2_confirm": "✅ Confirm Cut",
-        "t2_reject": "❌ Not accepted / Feedback",
-        "t2_feedback": "Feedback (what should be improved?)",
-        "t2_feedback_ph": "e.g. 'Too little focus on Karma' or 'Passages 3 & 5 too long'",
-        "t2_retry": "🔄 Analyze again with feedback",
-        "t3_audio": "Cut Podcast",
-        "msg_upload": "Please upload an audio file first.",
-        "msg_no_data": "Error: No audio file or no passages available.",
-        "msg_success": "✅ Success! Cut audio track saved to: {}",
-        "msg_cut_error": "Error during cut: {}",
-        "msg_http": "HTTP Error {} at API ({}): {}",
-        "msg_conn": "Connection abort (Attempt {}/{}): {}. Waiting 5 seconds and retrying...",
-        "msg_conn_final": "CONNECTION ERROR at API ({}): {}",
-        "msg_api_err": "ERROR during API request: {}",
-        "msg_json": "ERROR: LLM returned invalid JSON.",
-        "msg_raw": "Raw response: {}",
-        "msg_no_pass": "ERROR: LLM did not return expected 'relevant_passages' array. Response: {}",
-        "passage_rel": "(Relevance: {}/10)",
-        "passage_sum": "→ {}",
-        "err_no_passages": "No passages to cut available.",
-        "prov_nim": "NVIDIA NIM",
-        "prov_openai": "OpenAI",
-        "prov_openrouter": "OpenRouter",
-        "prov_unsloth": "Unsloth / vLLM (local)",
-        "prov_custom": "Custom / other API",
-    },
-}
-
-
-def T(key, lang="de"):
-    return TR.get(lang, TR["de"]).get(key, key)
-
-
-def prov_label(key, lang="de"):
-    return PROVIDER_PRESETS[key].get(f"label_{lang}", PROVIDER_PRESETS[key]["label_de"])
-
-
-def prov_help(key, lang="de"):
-    return PROVIDER_PRESETS[key].get(f"help_{lang}", PROVIDER_PRESETS[key]["help_de"])
-
-
-# ---------------------------------------------------------------------------
 # Pfade & Konfigurationsdatei
 # ---------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KEY_FILE = os.path.join(BASE_DIR, ".env")
 
-DEFAULT_THEME = "Suchbegriff hier eingeben"
+DEFAULT_THEME_DE = "Suchbegriff hier eingeben"
+DEFAULT_THEME_EN = "Search term here"
 DEFAULT_LLM_MODEL = ""
 DEFAULT_BASE_URL = ""
 DEFAULT_API_KEY = ""
@@ -228,8 +47,18 @@ PROVIDER_PRESETS = {
         "api_key": "",
         "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
         "auth_header": "Bearer",
-        "help_de": TR["de"]["setup_help_nim"],
-        "help_en": TR["en"]["setup_help_nim"],
+        "help_de": """### NVIDIA NIM API-Zugang einrichten
+
+1. Gehen Sie auf https://build.nvidia.com/nim und erstellen Sie ein Konto.
+2. Suchen Sie nach einem LLM-Modell (z. B. `nemotron-3.5-super-vl-120b-a12b` oder `nemotron-3.5-lightning-30b-a3b`).
+3. Erstellen Sie einen API-Key unter "API Keys" in Ihrem NVIDIA NIM Dashboard.
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".""",
+        "help_en": """### NVIDIA NIM API Setup
+
+1. Go to https://build.nvidia.com/nim and create an account.
+2. Search for an LLM model (e.g. `nemotron-3.5-super-vl-120b-a12b` or `nemotron-3.5-lightning-30b-a3b`).
+3. Create an API Key under "API Keys" in your NVIDIA NIM Dashboard.
+4. Enter Key, Base URL and Model name here. Click "Save Configuration".""",
     },
     "openai": {
         "label_de": "OpenAI",
@@ -238,8 +67,18 @@ PROVIDER_PRESETS = {
         "api_key": "",
         "model": "gpt-4o-mini",
         "auth_header": "Bearer",
-        "help_de": TR["de"]["setup_help_openai"],
-        "help_en": TR["en"]["setup_help_openai"],
+        "help_de": """### OpenAI API-Zugang einrichten
+
+1. Gehen Sie auf https://platform.openai.com und erstellen Sie ein Konto.
+2. Erstellen Sie einen API-Key unter "API Keys" in Ihrem OpenAI Dashboard.
+3. Wählen Sie ein Modell (z. B. `gpt-4o-mini`, `gpt-4o`).
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".""",
+        "help_en": """### OpenAI API Setup
+
+1. Go to https://platform.openai.com and create an account.
+2. Create an API Key under "API Keys" in your OpenAI Dashboard.
+3. Select a model (e.g. `gpt-4o-mini`, `gpt-4o`).
+4. Enter Key, Base URL and Model name here. Click "Save Configuration".""",
     },
     "openrouter": {
         "label_de": "OpenRouter",
@@ -248,8 +87,18 @@ PROVIDER_PRESETS = {
         "api_key": "",
         "model": "openrouter/auto",
         "auth_header": "Bearer",
-        "help_de": TR["de"]["setup_help_openrouter"],
-        "help_en": TR["en"]["setup_help_openrouter"],
+        "help_de": """### OpenRouter API-Zugang einrichten
+
+1. Gehen Sie auf https://openrouter.ai und erstellen Sie ein Konto.
+2. Erstellen Sie einen API-Key unter "Keys" in Ihrem OpenRouter Dashboard.
+3. Wählen Sie ein Modell aus dem OpenRouter Model-Katalog.
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".""",
+        "help_en": """### OpenRouter API Setup
+
+1. Go to https://openrouter.ai and create an account.
+2. Create an API Key under "Keys" in your OpenRouter Dashboard.
+3. Select a model from the OpenRouter Model Catalog.
+4. Enter Key, Base URL and Model name here. Click "Save Configuration".""",
     },
     "unsloth": {
         "label_de": "Unsloth / vLLM (lokal)",
@@ -258,8 +107,22 @@ PROVIDER_PRESETS = {
         "api_key": "not-needed",
         "model": "",
         "auth_header": "Bearer",
-        "help_de": TR["de"]["setup_help_unsloth"],
-        "help_en": TR["en"]["setup_help_unsloth"],
+        "help_de": """### Lokale Unsloth/vLLM API einrichten
+
+1. Starten Sie einen lokalen Unsloth/vLLM-Server, z. B.:
+   `python -m unsloth.vllm.server --model unsloth/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8888`
+2. Tragen Sie die Base URL (Standard: `http://127.0.0.1:8888/v1`) ein.
+3. Tragen Sie den Modellnamen ein (wie beim Serverstart angegeben).
+4. Der API-Key kann für lokale Server meist leer bleiben oder "not-needed" sein.
+5. Klicken Sie auf "Konfiguration speichern".""",
+        "help_en": """### Local Unsloth/vLLM API Setup
+
+1. Start a local Unsloth/vLLM server, e.g.:
+   `python -m unsloth.vllm.server --model unsloth/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8888`
+2. Enter the Base URL (default: `http://127.0.0.1:8888/v1`).
+3. Enter the model name (as specified at server start).
+4. The API key can usually be left empty or set to "not-needed" for local servers.
+5. Click "Save Configuration".""",
     },
     "custom": {
         "label_de": "Eigene / andere API",
@@ -268,8 +131,16 @@ PROVIDER_PRESETS = {
         "api_key": "",
         "model": "",
         "auth_header": "Bearer",
-        "help_de": TR["de"]["setup_help_custom"],
-        "help_en": TR["en"]["setup_help_custom"],
+        "help_de": """### Eigene API einrichten
+
+Tragen Sie Base URL, API-Key und Modellname manuell ein.
+Die API muss das OpenAI-kompatible Chat-Completions-Format unterstützen:
+`POST {base_url}/chat/completions` mit JSON-Body `{model, messages, temperature}`.""",
+        "help_en": """### Custom API Setup
+
+Enter Base URL, API Key and Model name manually.
+The API must support the OpenAI-compatible Chat Completions format:
+`POST {base_url}/chat/completions` with JSON body `{model, messages, temperature}`.""",
     },
 }
 
@@ -531,11 +402,11 @@ Antworte NUR mit einem gültigen JSON-Objekt, das ein Feld "relevant_passages" e
 # ---------------------------------------------------------------------------
 # 3. Audio-Schnitt
 # ---------------------------------------------------------------------------
-def trim_audio(audio_path, relevant_passages, output_path, lang="de"):
+def trim_audio(audio_path, relevant_passages, output_path):
     audio = AudioSegment.from_mp3(audio_path)
     sorted_passages = sorted(relevant_passages, key=lambda x: x["start"])
     if not sorted_passages:
-        raise ValueError(T("err_no_passages", lang))
+        raise ValueError("Keine Passagen zum Schneiden vorhanden.")
     start_ms = int(sorted_passages[0]["start"] * 1000)
     end_ms = int(sorted_passages[-1]["end"] * 1000)
     trimmed = audio[start_ms:end_ms]
@@ -566,231 +437,125 @@ def format_passages(passages, lang="de"):
         score = rp.get("relevance_score", 0)
         text = rp.get("text", "")
         summary = rp.get("summary_german", "")
+        rel_label = "(Relevanz: {}/10)" if lang == "de" else "(Relevance: {}/10)"
+        sum_label = "→ {}" if lang == "de" else "→ {}"
         lines.append(
-            f"{i}. [{st} - {en}] {T('passage_rel', lang).format(score)}\n"
+            f"{i}. [{st} - {en}] {rel_label.format(score)}\n"
             f"{text}\n"
-            f"{T('passage_sum', lang).format(summary)}\n"
+            f"{sum_label.format(summary)}\n"
         )
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Gradio-App
+# Gradio-App – deutsche Version
 # ---------------------------------------------------------------------------
-def build_demo():
+def build_de():
     cfg = load_config()
     configured = config_exists()
-    saved_lang = load_lang()
-
-    provider_choices = list(PROVIDER_PRESETS.keys())
-
-    # Alle UI-Komponenten für Sprachumschaltung: (component, attribute, key_de, key_en, format_fn)
-    ui_components = []
-
-    def reg(comp, attr, key_de, key_en=None, fmt=None):
-        ui_components.append((comp, attr, key_de, key_en or key_de, fmt))
 
     with gr.Blocks(title="PodcastCutter") as demo:
-        # Sprachumschalter
-        with gr.Row():
-            lang_dropdown = gr.Dropdown(
-                choices=["de", "en"],
-                value=saved_lang,
-                label=T("lang_label", saved_lang),
-            )
+        gr.Markdown("# ✂️ PodcastCutter")
+        gr.Markdown("Lokale Audio-Transkription, LLM-Themenanalyse und benutzergesteuerter Schnitt. "
+                    "Transkription läuft lokal via openai-whisper; LLM-Analyse über eine konfigurierbare API.")
 
-        gr.Markdown("")
-
-        title_md = gr.Markdown(f"# {T('app_title', saved_lang)}")
-        subtitle_md = gr.Markdown(T("app_subtitle", saved_lang))
-
-        # State
         state_audio_path = gr.State(None)
         state_segments = gr.State(None)
         state_passages = gr.State(None)
-        state_theme = gr.State(DEFAULT_THEME)
-        state_config = gr.State(cfg)
-        state_lang = gr.State(saved_lang)
+        state_theme = gr.State(DEFAULT_THEME_DE)
 
-        def switch_lang(new_lang):
-            save_lang(new_lang)
-            updates = []
-            for comp, attr, key_de, key_en, fmt in ui_components:
-                text = T(key_de if new_lang == "de" else key_en, new_lang)
-                if fmt:
-                    text = text.format(*fmt())
-                # gr.Button verwendet 'value' statt 'label'
-                if isinstance(comp, gr.Button):
-                    updates.append(gr.update(value=text))
-                elif attr == "label":
-                    updates.append(gr.update(label=text))
-                elif attr == "value":
-                    updates.append(gr.update(value=text))
-                elif attr == "placeholder":
-                    updates.append(gr.update(placeholder=text))
-                elif attr == "info":
-                    updates.append(gr.update(info=text))
-            return updates
-
-        # Hinweis: Sprachumschalter aktualisiert state_lang.
-        # Die statischen UI-Texte werden beim Start in der gespeicherten Sprache gerendert.
-        # Ein dynamisches Umschalten aller Labels erfordert das Befüllen von ui_text_components,
-        # das hier aus Gründen der Einfachheit ausgelassen wird. Die Sprache wird in den
-        # Callbacks (on_process, on_retry) korrekt für die Ausgaben verwendet.
-
-        # =====================================================================
-        # TAB 0: Einrichtung (Erstlauf)
-        # =====================================================================
-            t0_title = gr.Markdown(T("setup_title", saved_lang))
-            reg(t0_title, "value", "setup_title")
+        # Tab 0: Einrichtung
+        with gr.Tab("0. 🔧 Einrichtung" if not configured else "0. ✅ Einrichtung"):
+            gr.Markdown("## Erste Einrichtung")
             if not configured:
-                t0_intro = gr.Markdown(T("setup_intro", saved_lang))
-                reg(t0_intro, "value", "setup_intro")
+                gr.Markdown("### API-Anbieter auswählen und Zugangsdaten eingeben\n\nWählen Sie den LLM-Anbieter aus, den Sie für die Themenanalyse verwenden möchten. Unterstützt werden alle OpenAI-kompatiblen APIs.")
                 setup_provider = gr.Dropdown(
-                    choices=provider_choices,
+                    choices=list(PROVIDER_PRESETS.keys()),
                     value="nvidia-nim",
-                    label=T("setup_provider", saved_lang),
-                    info=T("setup_provider_info", saved_lang),
+                    label="API-Anbieter",
+                    info="Welche LLM-API möchten Sie verwenden?",
                 )
-                reg(setup_provider, "label", "setup_provider")
-                reg(setup_provider, "info", "setup_provider_info")
-                setup_help = gr.Markdown(prov_help("nvidia-nim", saved_lang))
-                reg(setup_help, "value", "setup_help_nim")
-
+                setup_help = gr.Markdown(PROVIDER_PRESETS["nvidia-nim"]["help_de"])
                 with gr.Row():
-                    s_api = gr.Textbox(label=T("setup_api_key", saved_lang), type="password",
-                                       placeholder=T("setup_api_key_ph", saved_lang))
-                    reg(s_api, "label", "setup_api_key")
-                    reg(s_api, "placeholder", "setup_api_key_ph")
-                    s_url = gr.Textbox(label=T("setup_base_url", saved_lang),
-                                       value=PROVIDER_PRESETS["nvidia-nim"]["base_url"],
-                                       placeholder=T("setup_base_url_ph", saved_lang))
-                    reg(s_url, "label", "setup_base_url")
-                    reg(s_url, "placeholder", "setup_base_url_ph")
-                    s_model = gr.Textbox(label=T("setup_model", saved_lang),
-                                         value=PROVIDER_PRESETS["nvidia-nim"]["model"],
-                                         placeholder=T("setup_model_ph", saved_lang))
-                    reg(s_model, "label", "setup_model")
-                    reg(s_model, "placeholder", "setup_model_ph")
+                    s_api = gr.Textbox(label="API Key", type="password", placeholder="nvapi-... oder sk-...")
+                    s_url = gr.Textbox(label="Base URL", value=PROVIDER_PRESETS["nvidia-nim"]["base_url"], placeholder="https://integrate.api.nvidia.com/v1")
+                    s_model = gr.Textbox(label="LLM-Modell", value=PROVIDER_PRESETS["nvidia-nim"]["model"], placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b")
                 with gr.Row():
-                    s_out_audio = gr.Textbox(label=T("setup_out_audio", saved_lang),
-                                             value=DEFAULT_OUTPUT_AUDIO,
-                                             placeholder=T("setup_out_audio_ph", saved_lang))
-                    reg(s_out_audio, "label", "setup_out_audio")
-                    reg(s_out_audio, "placeholder", "setup_out_audio_ph")
-                    s_out_trans = gr.Textbox(label=T("setup_out_transcript", saved_lang),
-                                             value=DEFAULT_OUTPUT_TRANSCRIPT,
-                                             placeholder=T("setup_out_transcript_ph", saved_lang))
-                    reg(s_out_trans, "label", "setup_out_transcript")
-                    reg(s_out_trans, "placeholder", "setup_out_transcript_ph")
-                s_save = gr.Button(T("setup_save", saved_lang), variant="primary")
-                reg(s_save, "label", "setup_save")
+                    s_out_audio = gr.Textbox(label="Ausgabe-Datei für geschnittenes MP3", value=DEFAULT_OUTPUT_AUDIO, placeholder="/pfad/zum/ausgabe.mp3")
+                    s_out_trans = gr.Textbox(label="Ausgabe-Datei für Transkript-Cache", value=DEFAULT_OUTPUT_TRANSCRIPT, placeholder="/pfad/zum/transkript.json")
+                s_save = gr.Button("💾 Konfiguration speichern", variant="primary")
                 s_status = gr.Markdown("")
 
-                def upd_help(provider, lang):
-                    return gr.update(value=prov_help(provider, lang))
-
-                setup_provider.change(fn=upd_help, inputs=[setup_provider, state_lang], outputs=[setup_help])
+                def upd_help(provider):
+                    return gr.update(value=PROVIDER_PRESETS[provider]["help_de"])
+                setup_provider.change(fn=upd_help, inputs=[setup_provider], outputs=[setup_help])
 
                 def do_setup(prov, key, url, model, out_a, out_t):
                     if not key or not url or not model:
-                        return gr.update(value=T("setup_save_err", saved_lang))
+                        return gr.update(value="❌ Bitte füllen Sie alle Pflichtfelder aus (API Key, Base URL, Modell).")
                     ok, msg = save_config(prov, key, url, model, out_a, out_t)
                     if ok:
-                        return gr.update(value=T("setup_save_ok", saved_lang))
+                        return gr.update(value="✅ Konfiguration gespeichert in .env\nSie können jetzt zu Tab '1. Einstellungen & Datei' wechseln und das Programm nutzen.")
                     return gr.update(value=f"❌ {msg}")
 
                 s_save.click(fn=do_setup,
                              inputs=[setup_provider, s_api, s_url, s_model, s_out_audio, s_out_trans],
                              outputs=[s_status])
             else:
-                gr.Markdown(T("setup_configured", saved_lang))
+                gr.Markdown("Ihre Konfiguration ist bereits gespeichert (`.env`). Sie können das Programm jetzt nutzen.\nFalls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei direkt oder löschen Sie sie und starten Sie das Programm neu.")
                 with gr.Row():
-                    show_btn = gr.Button(T("setup_show_cfg", saved_lang))
-                    reg(show_btn, "label", "setup_show_cfg")
+                    show_btn = gr.Button("📋 Konfiguration anzeigen")
                 cfg_disp = gr.Markdown("")
 
                 def show_cfg():
                     c = load_config()
                     p = c.get("API_PROVIDER", "custom")
-                    pr = prov_label(p, saved_lang)
-                    k_ok = T("setup_cfg_key_ok", saved_lang) if c["API_KEY"] else T("setup_cfg_key_no", saved_lang)
+                    pr = PROVIDER_PRESETS.get(p, {}).get("label_de", p)
+                    k_ok = "✅ gesetzt" if c["API_KEY"] else "❌ nicht gesetzt"
                     return gr.update(value=(
-                        f"{T('setup_cfg_title', saved_lang)}\n"
-                        f"{T('setup_cfg_provider', saved_lang).format(pr)}\n"
-                        f"{k_ok}\n"
-                        f"{T('setup_cfg_base_url', saved_lang).format(c['BASE_URL'] or ('nicht gesetzt' if saved_lang == 'de' else 'not set'))}\n"
-                        f"{T('setup_cfg_model', saved_lang).format(c['LLM_MODEL'] or ('nicht gesetzt' if saved_lang == 'de' else 'not set'))}\n"
-                        f"{T('setup_cfg_out_audio', saved_lang).format(c['OUTPUT_AUDIO'])}\n"
-                        f"{T('setup_cfg_out_transcript', saved_lang).format(c['OUTPUT_TRANSCRIPT'])}\n"
+                        f"Aktuelle Konfiguration:\n"
+                        f"- Anbieter: {pr}\n"
+                        f"- API Key: {k_ok}\n"
+                        f"- Base URL: {c['BASE_URL'] or 'nicht gesetzt'}\n"
+                        f"- Modell: {c['LLM_MODEL'] or 'nicht gesetzt'}\n"
+                        f"- Audio-Ausgabe: {c['OUTPUT_AUDIO']}\n"
+                        f"- Transkript-Cache: {c['OUTPUT_TRANSCRIPT']}\n"
                     ))
-
                 show_btn.click(fn=show_cfg, outputs=[cfg_disp])
 
         # Tab 1
-        with gr.Tab(T("tab_settings", saved_lang)):
+        with gr.Tab("1. Einstellungen & Datei"):
             with gr.Row():
-                audio_upload = gr.File(label=T("t1_audio", saved_lang), file_types=[".mp3", ".wav"])
-                reg(audio_upload, "label", "t1_audio")
-                theme_input = gr.Textbox(label=T("t1_theme", saved_lang),
-                                         value=DEFAULT_THEME,
-                                         placeholder=T("t1_theme_ph", saved_lang))
-                reg(theme_input, "label", "t1_theme")
-                reg(theme_input, "placeholder", "t1_theme_ph")
+                audio_upload = gr.File(label="Podcast-Datei (MP3/WAV)", file_types=[".mp3", ".wav"])
+                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="z.B. Buddhismus und Mitgefühl")
             with gr.Row():
-                p_input = gr.Dropdown(choices=provider_choices,
-                                      value=cfg.get("API_PROVIDER", "custom"),
-                                      label=T("t1_provider", saved_lang))
-                reg(p_input, "label", "t1_provider")
-                m_input = gr.Textbox(label=T("t1_model", saved_lang),
-                                     value=cfg.get("LLM_MODEL", ""),
-                                     placeholder=T("t1_model_ph", saved_lang))
-                reg(m_input, "label", "t1_model")
-                reg(m_input, "placeholder", "t1_model_ph")
-                b_input = gr.Textbox(label=T("t1_base_url", saved_lang),
-                                     value=cfg.get("BASE_URL", ""),
-                                     placeholder=T("t1_base_url_ph", saved_lang))
-                reg(b_input, "label", "t1_base_url")
-                reg(b_input, "placeholder", "t1_base_url_ph")
-                k_input = gr.Textbox(label=T("t1_api_key", saved_lang),
-                                     value=cfg.get("API_KEY", ""),
-                                     type="password",
-                                     placeholder=T("t1_api_key_ph", saved_lang))
-                reg(k_input, "label", "t1_api_key")
-                reg(k_input, "placeholder", "t1_api_key_ph")
-            p_btn = gr.Button(T("t1_process", saved_lang), variant="primary")
-            reg(p_btn, "label", "t1_process")
+                p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API-Anbieter")
+                m_input = gr.Textbox(label="LLM-Modell", value=cfg.get("LLM_MODEL", ""), placeholder="z.B. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
+                k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... oder sk-...")
+            p_btn = gr.Button("🚀 Transkribieren & Analysieren", variant="primary")
 
         # Tab 2
-        with gr.Tab(T("tab_results", saved_lang)):
-            trans_out = gr.Textbox(label=T("t2_transcript", saved_lang), lines=15, interactive=False)
-            reg(trans_out, "label", "t2_transcript")
-            pass_out = gr.Textbox(label=T("t2_passages", saved_lang), lines=15, interactive=False)
-            reg(pass_out, "label", "t2_passages")
+        with gr.Tab("2. Ergebnisse & Bestätigung"):
+            trans_out = gr.Textbox(label="Vollständiges Transkript (mit Zeitcodes)", lines=15, interactive=False)
+            pass_out = gr.Textbox(label="Relevante Passagen (markiert)", lines=15, interactive=False)
             with gr.Row():
-                c_btn = gr.Button(T("t2_confirm", saved_lang), variant="primary")
-                reg(c_btn, "label", "t2_confirm")
-                r_btn = gr.Button(T("t2_reject", saved_lang), variant="stop")
-                reg(r_btn, "label", "t2_reject")
-            f_input = gr.Textbox(label=T("t2_feedback", saved_lang),
-                                 placeholder=T("t2_feedback_ph", saved_lang))
-            reg(f_input, "label", "t2_feedback")
-            reg(f_input, "placeholder", "t2_feedback_ph")
-            r_btn2 = gr.Button(T("t2_retry", saved_lang))
-            reg(r_btn2, "label", "t2_retry")
+                c_btn = gr.Button("✅ Schnitt bestätigen", variant="primary")
+                r_btn = gr.Button("❌ Nicht zustimmen / Feedback", variant="stop")
+            f_input = gr.Textbox(label="Feedback (was soll verbessert werden?)", placeholder="z.B. 'Zu wenig Fokus auf Karma' oder 'Passagen 3 & 5 sind zu lang'")
+            r_btn2 = gr.Button("🔄 Mit Feedback erneut analysieren")
 
         # Tab 3
-        with gr.Tab(T("tab_cut", saved_lang)):
-            a_out = gr.Audio(label=T("t3_audio", saved_lang), type="filepath")
-            reg(a_out, "label", "t3_audio")
+        with gr.Tab("3. Schnitt & Download"):
+            a_out = gr.Audio(label="Geschnittener Podcast", type="filepath")
             d_info = gr.Markdown("")
 
         # Callbacks
-        def on_process(audio_file, theme, prov, model, url, key, cur_lang):
+        def on_process(audio_file, theme, prov, model, url, key):
             save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
             if audio_file is None:
                 return (
-                    T("msg_upload", cur_lang),
+                    "Bitte laden Sie zuerst eine Audio-Datei hoch.",
                     "", None, None, None, theme,
                     gr.update(visible=True), gr.update(visible=True),
                     gr.update(visible=False), gr.update(visible=False),
@@ -801,8 +566,8 @@ def build_demo():
             t_text = format_transcript(segments)
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            passages = analyze_transcript(segments, theme, model, url, key, auth, cur_lang)
-            p_text = format_passages(passages, cur_lang)
+            passages = analyze_transcript(segments, theme, model, url, key, auth, "de")
+            p_text = format_passages(passages, "de")
             return (
                 t_text, p_text, audio_file.name, segments, passages, theme,
                 gr.update(visible=True), gr.update(visible=True),
@@ -811,16 +576,16 @@ def build_demo():
                 gr.update(visible=False), gr.update(visible=False),
             )
 
-        def on_confirm(a_path, passages, cur_lang):
+        def on_confirm(a_path, passages):
             try:
                 if a_path is None or not passages:
-                    return gr.update(visible=False), T("msg_no_data", cur_lang)
+                    return gr.update(visible=False), "Fehler: Keine Audio-Datei oder keine Passagen vorhanden."
                 out = cfg["OUTPUT_AUDIO"]
-                trim_audio(a_path, passages, out, cur_lang)
-                return gr.update(value=out, visible=True), T("msg_success", cur_lang).format(out)
+                trim_audio(a_path, passages, out)
+                return gr.update(value=out, visible=True), f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out}"
             except Exception as e:
                 print(f"FEHLER beim Audio-Schnitt: {e}")
-                return gr.update(visible=False), f"{T('msg_cut_error', cur_lang).format(e)}"
+                return gr.update(visible=False), f"Fehler beim Schnitt: {e}"
 
         def on_reject(feedback, cur_theme):
             nt = cur_theme
@@ -828,7 +593,7 @@ def build_demo():
                 nt = f"{cur_theme} ({feedback.strip()})"
             return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
 
-        def on_retry(a_path, theme, prov, model, url, key, feedback, cur_lang):
+        def on_retry(a_path, theme, prov, model, url, key, feedback):
             if a_path is None:
                 return "", "", None, None, None, theme
             segments, _ = transcribe_audio(a_path.name)
@@ -837,15 +602,15 @@ def build_demo():
                 et = f"{theme} ({feedback.strip()})"
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            passages = analyze_transcript(segments, et, model, url, key, auth, cur_lang)
+            passages = analyze_transcript(segments, et, model, url, key, auth, "de")
             return (
                 format_transcript(segments),
-                format_passages(passages, cur_lang),
+                format_passages(passages, "de"),
                 a_path, segments, passages, et,
             )
 
         p_btn.click(fn=on_process,
-                    inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input, state_lang],
+                    inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
                     outputs=[trans_out, pass_out,
                              state_audio_path, state_segments, state_passages, state_theme,
                              trans_out, pass_out,
@@ -853,7 +618,7 @@ def build_demo():
                              a_out, d_info])
 
         c_btn.click(fn=on_confirm,
-                    inputs=[state_audio_path, state_passages, state_lang],
+                    inputs=[state_audio_path, state_passages],
                     outputs=[a_out, d_info])
 
         r_btn.click(fn=on_reject,
@@ -861,15 +626,210 @@ def build_demo():
                     outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2])
 
         r_btn2.click(fn=on_retry,
-                     inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input, state_lang],
+                     inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input],
                      outputs=[trans_out, pass_out,
                               state_audio_path, state_segments, state_passages, state_theme])
 
-        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
-        lang_dropdown.change(
-            fn=switch_lang,
-            inputs=[lang_dropdown],
-            outputs=[comp for comp, _, _, _, _ in ui_components],
+    return demo
+
+
+# ---------------------------------------------------------------------------
+# Gradio-App – englische Version
+# ---------------------------------------------------------------------------
+def build_en():
+    cfg = load_config()
+    configured = config_exists()
+
+    with gr.Blocks(title="PodcastCutter") as demo:
+        gr.Markdown("# ✂️ PodcastCutter")
+        gr.Markdown("Local audio transcription, LLM-based topic analysis and user-controlled editing. "
+                    "Transcription runs locally via openai-whisper; LLM analysis via a configurable API.")
+
+        state_audio_path = gr.State(None)
+        state_segments = gr.State(None)
+        state_passages = gr.State(None)
+        state_theme = gr.State(DEFAULT_THEME_EN)
+
+        with gr.Tab("0. 🔧 Setup" if not configured else "0. ✅ Setup"):
+            gr.Markdown("## First-Time Setup")
+            if not configured:
+                gr.Markdown("### Select API provider and enter credentials\n\nChoose the LLM provider you want to use for topic analysis. All OpenAI-compatible APIs are supported.")
+                setup_provider = gr.Dropdown(
+                    choices=list(PROVIDER_PRESETS.keys()),
+                    value="nvidia-nim",
+                    label="API Provider",
+                    info="Which LLM API do you want to use?",
+                )
+                setup_help = gr.Markdown(PROVIDER_PRESETS["nvidia-nim"]["help_en"])
+                with gr.Row():
+                    s_api = gr.Textbox(label="API Key", type="password", placeholder="nvapi-... or sk-...")
+                    s_url = gr.Textbox(label="Base URL", value=PROVIDER_PRESETS["nvidia-nim"]["base_url"], placeholder="https://integrate.api.nvidia.com/v1")
+                    s_model = gr.Textbox(label="LLM Model", value=PROVIDER_PRESETS["nvidia-nim"]["model"], placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                with gr.Row():
+                    s_out_audio = gr.Textbox(label="Output file for cut MP3", value=DEFAULT_OUTPUT_AUDIO, placeholder="/path/to/output.mp3")
+                    s_out_trans = gr.Textbox(label="Output file for transcript cache", value=DEFAULT_OUTPUT_TRANSCRIPT, placeholder="/path/to/transcript.json")
+                s_save = gr.Button("💾 Save Configuration", variant="primary")
+                s_status = gr.Markdown("")
+
+                def upd_help(provider):
+                    return gr.update(value=PROVIDER_PRESETS[provider]["help_en"])
+                setup_provider.change(fn=upd_help, inputs=[setup_provider], outputs=[setup_help])
+
+                def do_setup(prov, key, url, model, out_a, out_t):
+                    if not key or not url or not model:
+                        return gr.update(value="❌ Please fill in all required fields (API Key, Base URL, Model).")
+                    ok, msg = save_config(prov, key, url, model, out_a, out_t)
+                    if ok:
+                        return gr.update(value="✅ Configuration saved to .env\nYou can now switch to Tab '1. Settings & File' and use the program.")
+                    return gr.update(value=f"❌ {msg}")
+
+                s_save.click(fn=do_setup,
+                             inputs=[setup_provider, s_api, s_url, s_model, s_out_audio, s_out_trans],
+                             outputs=[s_status])
+            else:
+                gr.Markdown("Your configuration is already saved (`.env`). You can now use the program.\nTo change settings, edit the `.env` file directly or delete it and restart the program.")
+                with gr.Row():
+                    show_btn = gr.Button("📋 Show Configuration")
+                cfg_disp = gr.Markdown("")
+
+                def show_cfg():
+                    c = load_config()
+                    p = c.get("API_PROVIDER", "custom")
+                    pr = PROVIDER_PRESETS.get(p, {}).get("label_en", p)
+                    k_ok = "✅ set" if c["API_KEY"] else "❌ not set"
+                    return gr.update(value=(
+                        f"Current Configuration:\n"
+                        f"- Provider: {pr}\n"
+                        f"- API Key: {k_ok}\n"
+                        f"- Base URL: {c['BASE_URL'] or 'not set'}\n"
+                        f"- Model: {c['LLM_MODEL'] or 'not set'}\n"
+                        f"- Audio Output: {c['OUTPUT_AUDIO']}\n"
+                        f"- Transcript Cache: {c['OUTPUT_TRANSCRIPT']}\n"
+                    ))
+                show_btn.click(fn=show_cfg, outputs=[cfg_disp])
+
+        with gr.Tab("1. Settings & File"):
+            with gr.Row():
+                audio_upload = gr.File(label="Podcast File (MP3/WAV)", file_types=[".mp3", ".wav"])
+                theme_input = gr.Textbox(label="Topic for LLM Search", value=DEFAULT_THEME_EN, placeholder="e.g. Buddhism and Compassion")
+            with gr.Row():
+                p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API Provider")
+                m_input = gr.Textbox(label="LLM Model", value=cfg.get("LLM_MODEL", ""), placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
+                k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... or sk-...")
+            p_btn = gr.Button("🚀 Transcribe & Analyze", variant="primary")
+
+        with gr.Tab("2. Results & Confirmation"):
+            trans_out = gr.Textbox(label="Full Transcript (with Timecodes)", lines=15, interactive=False)
+            pass_out = gr.Textbox(label="Relevant Passages (marked)", lines=15, interactive=False)
+            with gr.Row():
+                c_btn = gr.Button("✅ Confirm Cut", variant="primary")
+                r_btn = gr.Button("❌ Not accepted / Feedback", variant="stop")
+            f_input = gr.Textbox(label="Feedback (what should be improved?)", placeholder="e.g. 'Too little focus on Karma' or 'Passages 3 & 5 too long'")
+            r_btn2 = gr.Button("🔄 Analyze again with feedback")
+
+        with gr.Tab("3. Cut & Download"):
+            a_out = gr.Audio(label="Cut Podcast", type="filepath")
+            d_info = gr.Markdown("")
+
+        def on_process(audio_file, theme, prov, model, url, key):
+            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
+            if audio_file is None:
+                return (
+                    "Please upload an audio file first.",
+                    "", None, None, None, theme,
+                    gr.update(visible=True), gr.update(visible=True),
+                    gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=False),
+                )
+            segments, _ = transcribe_audio(audio_file.name)
+            t_text = format_transcript(segments)
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
+            auth = preset.get("auth_header", "Bearer")
+            passages = analyze_transcript(segments, theme, model, url, key, auth, "en")
+            p_text = format_passages(passages, "en")
+            return (
+                t_text, p_text, audio_file.name, segments, passages, theme,
+                gr.update(visible=True), gr.update(visible=True),
+                gr.update(visible=True), gr.update(visible=True),
+                gr.update(visible=True), gr.update(visible=True),
+                gr.update(visible=False), gr.update(visible=False),
+            )
+
+        def on_confirm(a_path, passages):
+            try:
+                if a_path is None or not passages:
+                    return gr.update(visible=False), "Error: No audio file or no passages available."
+                out = cfg["OUTPUT_AUDIO"]
+                trim_audio(a_path, passages, out)
+                return gr.update(value=out, visible=True), f"✅ Success! Cut audio track saved to: {out}"
+            except Exception as e:
+                print(f"FEHLER beim Audio-Schnitt: {e}")
+                return gr.update(visible=False), f"Error during cut: {e}"
+
+        def on_reject(feedback, cur_theme):
+            nt = cur_theme
+            if feedback.strip():
+                nt = f"{cur_theme} ({feedback.strip()})"
+            return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
+
+        def on_retry(a_path, theme, prov, model, url, key, feedback):
+            if a_path is None:
+                return "", "", None, None, None, theme
+            segments, _ = transcribe_audio(a_path.name)
+            et = theme
+            if feedback.strip():
+                et = f"{theme} ({feedback.strip()})"
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
+            auth = preset.get("auth_header", "Bearer")
+            passages = analyze_transcript(segments, et, model, url, key, auth, "en")
+            return (
+                format_transcript(segments),
+                format_passages(passages, "en"),
+                a_path, segments, passages, et,
+            )
+
+        p_btn.click(fn=on_process,
+                    inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
+                    outputs=[trans_out, pass_out,
+                             state_audio_path, state_segments, state_passages, state_theme,
+                             trans_out, pass_out,
+                             c_btn, r_btn, f_input, r_btn2,
+                             a_out, d_info])
+
+        c_btn.click(fn=on_confirm,
+                    inputs=[state_audio_path, state_passages],
+                    outputs=[a_out, d_info])
+
+        r_btn.click(fn=on_reject,
+                    inputs=[f_input, state_theme],
+                    outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2])
+
+        r_btn2.click(fn=on_retry,
+                     inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input],
+                     outputs=[trans_out, pass_out,
+                              state_audio_path, state_segments, state_passages, state_theme])
+
+    return demo
+
+
+# ---------------------------------------------------------------------------
+# Haupt-App mit Sprachumschalter (zwei vollständige Oberflächen)
+# ---------------------------------------------------------------------------
+def build_demo():
+    saved_lang = load_lang()
+
+    demo_de = build_de()
+    demo_en = build_en()
+
+    with gr.Blocks(title="PodcastCutter") as demo:
+        gr.Markdown("# ✂️ PodcastCutter")
+        gr.Markdown("Wählen Sie Ihre Sprache / Select your language:")
+
+        demo_tabbed = gr.TabbedInterface(
+            [demo_de, demo_en],
+            ["🇩🇪 Deutsch", "🇬🇧 English"],
         )
 
     return demo
