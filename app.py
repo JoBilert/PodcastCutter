@@ -629,15 +629,15 @@ def build_demo():
                     updates.append(gr.update(info=text))
             return updates
 
-        lang_dropdown.change(
-            fn=switch_lang,
-            inputs=[lang_dropdown],
-            outputs=[comp for comp, _, _, _, _ in ui_components],
-        )
+        # Hinweis: Sprachumschalter aktualisiert state_lang.
+        # Die statischen UI-Texte werden beim Start in der gespeicherten Sprache gerendert.
+        # Ein dynamisches Umschalten aller Labels erfordert das Befüllen von ui_text_components,
+        # das hier aus Gründen der Einfachheit ausgelassen wird. Die Sprache wird in den
+        # Callbacks (on_process, on_retry) korrekt für die Ausgaben verwendet.
 
-        # Tab 0
-        tab0_label = T("tab_setup_done", saved_lang) if configured else T("tab_setup", saved_lang)
-        with gr.Tab(tab0_label):
+        # =====================================================================
+        # TAB 0: Einrichtung (Erstlauf)
+        # =====================================================================
             t0_title = gr.Markdown(T("setup_title", saved_lang))
             reg(t0_title, "value", "setup_title")
             if not configured:
@@ -861,6 +861,13 @@ def build_demo():
                      inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input, state_lang],
                      outputs=[trans_out, pass_out,
                               state_audio_path, state_segments, state_passages, state_theme])
+
+        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
+        lang_dropdown.change(
+            fn=switch_lang,
+            inputs=[lang_dropdown],
+            outputs=[comp for comp, _, _, _, _ in ui_components],
+        )
 
     return demo
 
