@@ -1,16 +1,18 @@
 # app.py
 """
 PodcastCutter GUI — Gradio-Interface für lokale Audio-Transkription,
-LLM-basierte Themenanalyse (NVIDIA NIM) und Benutzer-gesteuerten Audio-Schnitt.
+LLM-basierte Themenanalyse über beliebige OpenAI-kompatible APIs und
+Benutzer-gesteuerten Audio-Schnitt.
 
 Alle Verarbeitungsschritte laufen lokal (Transkription via openai-whisper).
-Die LLM-Analyse erfolgt über die NVIDIA NIM API (Cloud).
+Die LLM-Analyse erfolgt über eine konfigurierbare API (NVIDIA NIM, OpenAI,
+OpenRouter, lokale Unsloth/vLLM oder eigene API).
 
 Start:
     python3 app.py
 
 Erstlauf:
-    Richten Sie in Tab "0. Einrichtung" Ihre NVIDIA NIM API-Zugangsdaten ein.
+    Richten Sie in Tab "0. Einrichtung" Ihre API-Zugangsdaten ein.
 """
 
 import os
@@ -33,9 +35,89 @@ DEFAULT_THEME = "Suchbegriff hier eingeben"
 DEFAULT_LLM_MODEL = ""
 DEFAULT_BASE_URL = ""
 DEFAULT_API_KEY = ""
+DEFAULT_API_PROVIDER = "custom"
 DEFAULT_OUTPUT_AUDIO = os.path.join(BASE_DIR, "output_trimmed.mp3")
 DEFAULT_OUTPUT_TRANSCRIPT = os.path.join(BASE_DIR, "transcript_cache.json")
-USE_LOCAL_UNSLOTH = False
+
+# Voreingestellte Provider mit deren Standardwerten
+PROVIDER_PRESETS = {
+    "nvidia-nim": {
+        "label": "NVIDIA NIM",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "api_key": "",
+        "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "auth_header": "Bearer",
+        "help": """
+### NVIDIA NIM API-Zugang einrichten
+
+1. Gehen Sie auf https://build.nvidia.com/nim und erstellen Sie ein Konto.
+2. Suchen Sie nach einem LLM-Modell (z. B. `nemotron-3.5-super-vl-120b-a12b` oder `nemotron-3.5-lightning-30b-a3b`).
+3. Erstellen Sie einen API-Key unter "API Keys" in Ihrem NVIDIA NIM Dashboard.
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".
+""",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "",
+        "model": "gpt-4o-mini",
+        "auth_header": "Bearer",
+        "help": """
+### OpenAI API-Zugang einrichten
+
+1. Gehen Sie auf https://platform.openai.com und erstellen Sie ein Konto.
+2. Erstellen Sie einen API-Key unter "API Keys" in Ihrem OpenAI Dashboard.
+3. Wählen Sie ein Modell (z. B. `gpt-4o-mini`, `gpt-4o`).
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".
+""",
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "",
+        "model": "openrouter/auto",
+        "auth_header": "Bearer",
+        "help": """
+### OpenRouter API-Zugang einrichten
+
+1. Gehen Sie auf https://openrouter.ai und erstellen Sie ein Konto.
+2. Erstellen Sie einen API-Key unter "Keys" in Ihrem OpenRouter Dashboard.
+3. Wählen Sie ein Modell aus dem OpenRouter Model-Katalog.
+4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".
+""",
+    },
+    "unsloth": {
+        "label": "Unsloth / vLLM (lokal)",
+        "base_url": "http://127.0.0.1:8888/v1",
+        "api_key": "not-needed",
+        "model": "",
+        "auth_header": "Bearer",
+        "help": """
+### Lokale Unsloth/vLLM API einrichten
+
+1. Starten Sie einen lokalen Unsloth/vLLM-Server, z. B.:
+   `python -m unsloth.vllm.server --model unsloth/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8888`
+2. Tragen Sie die Base URL (Standard: `http://127.0.0.1:8888/v1`) ein.
+3. Tragen Sie den Modellnamen ein (wie beim Serverstart angegeben).
+4. Der API-Key kann für lokale Server meist leer bleiben oder "not-needed" sein.
+5. Klicken Sie auf "Konfiguration speichern".
+""",
+    },
+    "custom": {
+        "label": "Eigene / andere API",
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+        "auth_header": "Bearer",
+        "help": """
+### Eigene API einrichten
+
+Tragen Sie Base URL, API-Key und Modellname manuell ein.
+Die API muss das OpenAI-kompatible Chat-Completions-Format unterstützen:
+`POST {base_url}/chat/completions` mit JSON-Body `{model, messages, temperature}`.
+""",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +126,10 @@ USE_LOCAL_UNSLOTH = False
 def load_config():
     """Lädt Konfiguration aus .env-Datei. Gibt dict mit allen Keys zurück."""
     config = {
-        "NIM_API_KEY": "",
-        "NIM_BASE_URL": "",
-        "NIM_LLM_MODEL": "",
+        "API_PROVIDER": DEFAULT_API_PROVIDER,
+        "API_KEY": DEFAULT_API_KEY,
+        "BASE_URL": DEFAULT_BASE_URL,
+        "LLM_MODEL": DEFAULT_LLM_MODEL,
         "OUTPUT_AUDIO": DEFAULT_OUTPUT_AUDIO,
         "OUTPUT_TRANSCRIPT": DEFAULT_OUTPUT_TRANSCRIPT,
     }
@@ -55,12 +138,14 @@ def load_config():
             with open(KEY_FILE, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("NIM_API_KEY="):
-                        config["NIM_API_KEY"] = line.split("=", 1)[1]
-                    elif line.startswith("NIM_BASE_URL="):
-                        config["NIM_BASE_URL"] = line.split("=", 1)[1]
-                    elif line.startswith("NIM_LLM_MODEL="):
-                        config["NIM_LLM_MODEL"] = line.split("=", 1)[1]
+                    if line.startswith("API_PROVIDER="):
+                        config["API_PROVIDER"] = line.split("=", 1)[1]
+                    elif line.startswith("API_KEY="):
+                        config["API_KEY"] = line.split("=", 1)[1]
+                    elif line.startswith("BASE_URL="):
+                        config["BASE_URL"] = line.split("=", 1)[1]
+                    elif line.startswith("LLM_MODEL="):
+                        config["LLM_MODEL"] = line.split("=", 1)[1]
                     elif line.startswith("OUTPUT_AUDIO="):
                         config["OUTPUT_AUDIO"] = line.split("=", 1)[1]
                     elif line.startswith("OUTPUT_TRANSCRIPT="):
@@ -70,12 +155,13 @@ def load_config():
     return config
 
 
-def save_config(api_key, base_url, llm_model, output_audio, output_transcript):
+def save_config(provider, api_key, base_url, llm_model, output_audio, output_transcript):
     """Speichert Konfiguration in .env-Datei (nur für aktuellen User lesbar)."""
     lines = [
-        f"NIM_API_KEY={api_key}",
-        f"NIM_BASE_URL={base_url}",
-        f"NIM_LLM_MODEL={llm_model}",
+        f"API_PROVIDER={provider}",
+        f"API_KEY={api_key}",
+        f"BASE_URL={base_url}",
+        f"LLM_MODEL={llm_model}",
         f"OUTPUT_AUDIO={output_audio}",
         f"OUTPUT_TRANSCRIPT={output_transcript}",
     ]
@@ -93,7 +179,7 @@ def config_exists():
     if not os.path.exists(KEY_FILE):
         return False
     cfg = load_config()
-    return bool(cfg["NIM_API_KEY"].strip())
+    return bool(cfg["API_KEY"].strip())
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +222,10 @@ def transcribe_audio(audio_path: str, model_size: str = "base", language: str = 
 
 
 # ---------------------------------------------------------------------------
-# 2. LLM-Analyse (NVIDIA NIM API)
+# 2. LLM-Analyse (beliebige OpenAI-kompatible API)
 # ---------------------------------------------------------------------------
-def analyze_transcript(segments, theme, llm_model, base_url, api_key, use_local):
-    """Sucht mit dem LLM (NVIDIA NIM API) nach thematisch relevanten Passagen."""
+def analyze_transcript(segments, theme, llm_model, base_url, api_key, auth_header="Bearer"):
+    """Sucht mit dem LLM (beliebige OpenAI-kompatible API) nach relevanten Passagen."""
     full_text = "\n".join(
         f"[{seg['start']:.2f}s - {seg['end']:.2f}s]: {seg['text']}"
         for seg in segments
@@ -187,7 +273,7 @@ Antworte NUR mit einem gültigen JSON-Objekt, das ein Feld "relevant_passages" e
         data=data,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"{auth_header} {api_key}",
         },
         method="POST",
     )
@@ -200,14 +286,14 @@ Antworte NUR mit einem gültigen JSON-Objekt, das ein Feld "relevant_passages" e
             break  # Erfolgreich, Schleife verlassen
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8") if hasattr(e, 'read') else str(e)
-            print(f"HTTP-Fehler {e.code} bei der NVIDIA NIM API ({base_url}): {body[:1000]}")
+            print(f"HTTP-Fehler {e.code} bei der API ({base_url}): {body[:1000]}")
             return []
         except (urllib.error.URLError, ConnectionResetError, OSError) as e:
             if attempt < max_retries:
                 print(f"Verbindungsabbruch (Versuch {attempt}/{max_retries}): {e}. Warte 5 Sekunden und versuche erneut...")
                 time.sleep(5)
             else:
-                print(f"VERBINDUNGSFEHLER bei der NVIDIA NIM API ({base_url}): {e}")
+                print(f"VERBINDUNGSFEHLER bei der API ({base_url}): {e}")
                 return []
         except Exception as e:
             print(f"FEHLER während der API-Anfrage: {e}")
@@ -297,10 +383,13 @@ def build_demo():
     cfg = load_config()
     configured = config_exists()
 
+    provider_choices = list(PROVIDER_PRESETS.keys())
+    provider_labels = [PROVIDER_PRESETS[p]["label"] for p in provider_choices]
+
     with gr.Blocks(title="PodcastCutter") as demo:
         gr.Markdown("# ✂️ PodcastCutter")
         gr.Markdown("Lokale Audio-Transkription, LLM-Themenanalyse und benutzergesteuerter Schnitt. "
-                    "Transkription läuft lokal via openai-whisper; LLM-Analyse über NVIDIA NIM API.")
+                    "Transkription läuft lokal via openai-whisper; LLM-Analyse über eine konfigurierbare API.")
 
         # --- Zustand ---------------------------------------------------------
         state_audio_path = gr.State(None)
@@ -316,31 +405,38 @@ def build_demo():
             gr.Markdown("## Erste Einrichtung")
             if not configured:
                 gr.Markdown("""
-### NVIDIA NIM API-Zugang einrichten
+### API-Anbieter auswählen und Zugangsdaten eingeben
 
-1. Gehen Sie auf https://build.nvidia.com/nim und erstellen Sie ein Konto.
-2. Suchen Sie nach einem LLM-Modell (z. B. `nemotron-3.5-super-vl-120b-a12b` oder `nemotron-3.5-lightning-30b-a3b`).
-3. Erstellen Sie einen API-Key unter "API Keys" in Ihrem NVIDIA NIM Dashboard.
-4. Tragen Sie hier Key, Base URL und Modellname ein. Klicken Sie auf "Konfiguration speichern".
+Wählen Sie den LLM-Anbieter aus, den Sie für die Themenanalyse verwenden möchten.
+Unterstützt werden alle OpenAI-kompatiblen APIs.
 """)
+                setup_provider = gr.Dropdown(
+                    choices=provider_choices,
+                    value="nvidia-nim",
+                    label="API-Anbieter",
+                    info="Welche LLM-API möchten Sie verwenden?",
+                )
+                setup_help_md = gr.Markdown(PROVIDER_PRESETS["nvidia-nim"]["help"])
+
                 with gr.Row():
                     setup_api_key = gr.Textbox(
-                        label="NVIDIA NIM API Key",
+                        label="API Key",
                         type="password",
-                        placeholder="nvapi-...",
+                        placeholder="nvapi-... oder sk-...",
                     )
                     setup_base_url = gr.Textbox(
                         label="Base URL",
-                        value="https://integrate.api.nvidia.com/v1",
+                        value=PROVIDER_PRESETS["nvidia-nim"]["base_url"],
                         placeholder="https://integrate.api.nvidia.com/v1",
                     )
                     setup_llm_model = gr.Textbox(
                         label="LLM-Modell",
+                        value=PROVIDER_PRESETS["nvidia-nim"]["model"],
                         placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b",
                     )
                 with gr.Row():
                     setup_output_audio = gr.Textbox(
-                        label="Ausgabe-Ordner/Datei für geschnittenes MP3",
+                        label="Ausgabe-Datei für geschnittenes MP3",
                         value=DEFAULT_OUTPUT_AUDIO,
                         placeholder="/pfad/zum/ausgabe.mp3",
                     )
@@ -351,6 +447,15 @@ def build_demo():
                     )
                 setup_save_btn = gr.Button("💾 Konfiguration speichern", variant="primary")
                 setup_status = gr.Markdown("")
+
+                def update_help(provider_key):
+                    return gr.update(value=PROVIDER_PRESETS[provider_key]["help"])
+
+                setup_provider.change(
+                    fn=update_help,
+                    inputs=[setup_provider],
+                    outputs=[setup_help_md],
+                )
             else:
                 gr.Markdown("""
 Ihre Konfiguration ist bereits gespeichert (`.env`). Sie können das Programm jetzt nutzen.
@@ -370,26 +475,27 @@ Falls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei di
                     placeholder="z.B. Buddhismus und Mitgefühl",
                 )
             with gr.Row():
+                provider_input = gr.Dropdown(
+                    choices=provider_choices,
+                    value=cfg.get("API_PROVIDER", "custom"),
+                    label="API-Anbieter",
+                )
                 llm_model_input = gr.Textbox(
                     label="LLM-Modell",
-                    value=cfg["NIM_LLM_MODEL"],
+                    value=cfg.get("LLM_MODEL", ""),
                     placeholder="z.B. nvidia/nemotron-3.5-super-vl-120b-a12b",
                 )
                 base_url_input = gr.Textbox(
-                    label="NVIDIA NIM Base URL",
-                    value=cfg["NIM_BASE_URL"],
+                    label="Base URL",
+                    value=cfg.get("BASE_URL", ""),
                     placeholder="https://integrate.api.nvidia.com/v1",
                 )
                 api_key_input = gr.Textbox(
-                    label="NVIDIA NIM API Key",
-                    value=cfg["NIM_API_KEY"],
+                    label="API Key",
+                    value=cfg.get("API_KEY", ""),
                     type="password",
-                    placeholder="nvapi-...",
+                    placeholder="nvapi-... oder sk-...",
                 )
-            use_local_checkbox = gr.Checkbox(
-                label="Lokale Unsloth-API verwenden (statt OpenAI Cloud)",
-                value=False,
-            )
             process_btn = gr.Button("🚀 Transkribieren & Analysieren", variant="primary")
 
         # --- Tab 2: Ergebnisse & Bestätigung -------------------------------
@@ -419,10 +525,10 @@ Falls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei di
             download_info = gr.Markdown("")
 
         # --- Callbacks -------------------------------------------------------
-        def do_setup(api_key, base_url, llm_model, output_audio, output_transcript):
+        def do_setup(provider, api_key, base_url, llm_model, output_audio, output_transcript):
             if not api_key or not base_url or not llm_model:
                 return gr.update(value="❌ Bitte füllen Sie alle Pflichtfelder aus (API Key, Base URL, Modell).")
-            ok, msg = save_config(api_key, base_url, llm_model, output_audio, output_transcript)
+            ok, msg = save_config(provider, api_key, base_url, llm_model, output_audio, output_transcript)
             if ok:
                 return gr.update(value=f"✅ {msg}\nSie können jetzt zu Tab '1. Einstellungen & Datei' wechseln und das Programm nutzen.")
             else:
@@ -430,11 +536,12 @@ Falls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei di
 
         def show_configuration():
             c = load_config()
-            return gr.update(value=f"""
-Aktuelle Konfiguration:
-- API Key: {'✅ gesetzt' if c['NIM_API_KEY'] else '❌ nicht gesetzt'}
-- Base URL: {c['NIM_BASE_URL'] or 'nicht gesetzt'}
-- Modell: {c['NIM_LLM_MODEL'] or 'nicht gesetzt'}
+            p = c.get("API_PROVIDER", "custom")
+            return gr.update(value=f"""Aktuelle Konfiguration:
+- Anbieter: {PROVIDER_PRESETS.get(p, {}).get('label', p)}
+- API Key: {'✅ gesetzt' if c['API_KEY'] else '❌ nicht gesetzt'}
+- Base URL: {c['BASE_URL'] or 'nicht gesetzt'}
+- Modell: {c['LLM_MODEL'] or 'nicht gesetzt'}
 - Audio-Ausgabe: {c['OUTPUT_AUDIO']}
 - Transkript-Cache: {c['OUTPUT_TRANSCRIPT']}
 """)
@@ -442,8 +549,8 @@ Aktuelle Konfiguration:
         if not configured:
             setup_save_btn.click(
                 fn=do_setup,
-                inputs=[setup_api_key, setup_base_url, setup_llm_model,
-                        setup_output_audio, setup_output_transcript],
+                inputs=[setup_provider, setup_api_key, setup_base_url,
+                        setup_llm_model, setup_output_audio, setup_output_transcript],
                 outputs=[setup_status],
             )
         else:
@@ -452,8 +559,9 @@ Aktuelle Konfiguration:
                 outputs=[cfg_display],
             )
 
-        def on_process(audio_file, theme, llm_model, base_url, api_key, use_local):
-            save_key(api_key)
+        def on_process(audio_file, theme, provider, llm_model, base_url, api_key):
+            save_config(provider, api_key, base_url, llm_model,
+                        cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
             if audio_file is None:
                 return (
                     "Bitte laden Sie zuerst eine Audio-Datei hoch.",
@@ -475,9 +583,11 @@ Aktuelle Konfiguration:
             segments, language = transcribe_audio(audio_file.name)
             transcript_text = format_transcript(segments)
 
-            # LLM-Analyse (NVIDIA NIM)
+            # LLM-Analyse (gewählte API)
+            preset = PROVIDER_PRESETS.get(provider, PROVIDER_PRESETS["custom"])
+            auth_header = preset.get("auth_header", "Bearer")
             passages = analyze_transcript(
-                segments, theme, llm_model, base_url, api_key, use_local
+                segments, theme, llm_model, base_url, api_key, auth_header
             )
             passages_text = format_passages(passages)
 
@@ -530,15 +640,17 @@ Aktuelle Konfiguration:
                 gr.update(visible=False),
             )
 
-        def on_retry(audio_path, theme, llm_model, base_url, api_key, use_local, feedback):
+        def on_retry(audio_path, theme, provider, llm_model, base_url, api_key, feedback):
             if audio_path is None:
                 return ("", "", None, None, None, theme)
             segments, _ = transcribe_audio(audio_path)
             effective_theme = theme
             if feedback.strip():
                 effective_theme = f"{theme} ({feedback.strip()})"
+            preset = PROVIDER_PRESETS.get(provider, PROVIDER_PRESETS["custom"])
+            auth_header = preset.get("auth_header", "Bearer")
             passages = analyze_transcript(
-                segments, effective_theme, llm_model, base_url, api_key, use_local
+                segments, effective_theme, llm_model, base_url, api_key, auth_header
             )
             return (
                 format_transcript(segments),
@@ -552,8 +664,8 @@ Aktuelle Konfiguration:
         # --- Verkabelung -----------------------------------------------------
         process_btn.click(
             fn=on_process,
-            inputs=[audio_upload, theme_input, llm_model_input,
-                    base_url_input, api_key_input, use_local_checkbox],
+            inputs=[audio_upload, theme_input, provider_input,
+                    llm_model_input, base_url_input, api_key_input],
             outputs=[
                 transcript_output, passages_output,
                 state_audio_path, state_segments, state_passages, state_theme,
@@ -577,8 +689,8 @@ Aktuelle Konfiguration:
 
         retry_btn.click(
             fn=on_retry,
-            inputs=[state_audio_path, state_theme, llm_model_input,
-                    base_url_input, api_key_input, use_local_checkbox, feedback_input],
+            inputs=[state_audio_path, state_theme, provider_input,
+                    llm_model_input, base_url_input, api_key_input, feedback_input],
             outputs=[
                 transcript_output, passages_output,
                 state_audio_path, state_segments, state_passages, state_theme,
