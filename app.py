@@ -619,7 +619,10 @@ def build_demo():
                 text = T(key_de if new_lang == "de" else key_en, new_lang)
                 if fmt:
                     text = text.format(*fmt())
-                if attr == "label":
+                # gr.Button verwendet 'value' statt 'label'
+                if isinstance(comp, gr.Button):
+                    updates.append(gr.update(value=text))
+                elif attr == "label":
                     updates.append(gr.update(label=text))
                 elif attr == "value":
                     updates.append(gr.update(value=text))
