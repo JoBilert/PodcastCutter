@@ -470,132 +470,205 @@ def build_de():
         state_segments = gr.State(None)
         state_passages = gr.State(None)
 
-        # === TAB 1: Audio-Upload & Transkription ===
-        with gr.Group() as tab1:
-            gr.Markdown("## 1. Audio-Datei hochladen & transkribieren")
-            audio_upload = gr.File(label="Podcast-Datei (MP3/WAV)", file_types=[".mp3", ".wav"])
-            transcribe_btn = gr.Button("🎙️ Transkribieren", variant="primary")
-            transcript_out = gr.Textbox(label="Transkript", lines=12, interactive=False)
-            transcribe_status = gr.Markdown("")
-            go_to_tab2_btn = gr.Button("➡️ Zu Ergebnissen & Bestätigung", visible=False)
-
-            def do_transcribe(audio_file):
-                if audio_file is None:
-                    return (
-                        gr.update(visible=False),
-                        gr.update(visible=False),
-                        "Bitte laden Sie zuerst eine Audio-Datei hoch.",
-                        "",
-                        None,
-                        None,
-                        None,
-                    )
-                segments, language = transcribe_audio(audio_file.name)
-                t_text = format_transcript(segments)
-                return (
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                    t_text,
-                    "",
-                    audio_file.name,
-                    segments,
-                    None,
+        # Tab 0: Einrichtung
+        with gr.Tab("0. 🔧 Einrichtung" if not configured else "0. ✅ Einrichtung"):
+            gr.Markdown("## Erste Einrichtung")
+            if not configured:
+                gr.Markdown("### API-Anbieter auswählen und Zugangsdaten eingeben\n\nWählen Sie den LLM-Anbieter aus, den Sie für die Themenanalyse verwenden möchten. Unterstützt werden alle OpenAI-kompatiblen APIs.")
+                setup_provider = gr.Dropdown(
+                    choices=list(PROVIDER_PRESETS.keys()),
+                    value="nvidia-nim",
+                    label="API-Anbieter",
+                    info="Welche LLM-API möchten Sie verwenden?",
                 )
+                setup_help = gr.Markdown(PROVIDER_PRESETS["nvidia-nim"]["help_de"])
+                with gr.Row():
+                    s_api = gr.Textbox(label="API Key", type="password", placeholder="nvapi-... oder sk-...")
+                    s_url = gr.Textbox(label="Base URL", value=PROVIDER_PRESETS["nvidia-nim"]["base_url"], placeholder="https://integrate.api.nvidia.com/v1")
+                    s_model = gr.Textbox(label="LLM-Modell", value=PROVIDER_PRESETS["nvidia-nim"]["model"], placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                with gr.Row():
+                    s_out_audio = gr.Textbox(label="Ausgabe-Datei für geschnittenes MP3", value=DEFAULT_OUTPUT_AUDIO, placeholder="/pfad/zum/ausgabe.mp3")
+                    s_out_trans = gr.Textbox(label="Ausgabe-Datei für Transkript-Cache", value=DEFAULT_OUTPUT_TRANSCRIPT, placeholder="/pfad/zum/transkript.json")
+                s_save = gr.Button("💾 Konfiguration speichern", variant="primary")
+                s_status = gr.Markdown("")
 
-            transcribe_btn.click(
-                fn=do_transcribe,
-                inputs=[audio_upload],
-                outputs=[
-                    transcript_out,
-                    go_to_tab2_btn,
-                    transcript_out,
-                    transcribe_status,
-                    state_audio_path,
-                    state_segments,
-                    state_passages,
-                ],
-            )
+                def upd_help(provider):
+                    return gr.update(value=PROVIDER_PRESETS[provider]["help_de"])
+                setup_provider.change(fn=upd_help, inputs=[setup_provider], outputs=[setup_help])
 
-        # === TAB 2: Themenanalyse & Passagen-Auswahl ===
-        with gr.Group(visible=False) as tab2:
-            gr.Markdown("## 2. Themenanalyse & Passagen-Auswahl")
+                def do_setup(prov, key, url, model, out_a, out_t):
+                    if not key or not url or not model:
+                        return gr.update(value="❌ Bitte füllen Sie alle Pflichtfelder aus (API Key, Base URL, Modell).")
+                    ok, msg = save_config(prov, key, url, model, out_a, out_t)
+                    if ok:
+                        return gr.update(value="✅ Konfiguration gespeichert in .env\nSie können jetzt zu Tab '1. Einstellungen & Datei' wechseln und das Programm nutzen.")
+                    return gr.update(value=f"❌ {msg}")
 
-            gr.Markdown("### Transkript (zum Nachlesen)")
-            transcript_display = gr.Textbox(lines=12, interactive=False, label="Transkript")
+                s_save.click(fn=do_setup,
+                             inputs=[setup_provider, s_api, s_url, s_model, s_out_audio, s_out_trans],
+                             outputs=[s_status])
+            else:
+                gr.Markdown("Ihre Konfiguration ist bereits gespeichert (`.env`). Sie können das Programm jetzt nutzen.\nFalls Sie die Einstellungen ändern möchten, bearbeiten Sie die `.env`-Datei direkt oder löschen Sie sie und starten Sie das Programm neu.")
+                with gr.Row():
+                    show_btn = gr.Button("📋 Konfiguration anzeigen")
+                cfg_disp = gr.Markdown("")
 
-            gr.Markdown("### Thema für LLM-Suche eingeben")
-            theme_input = gr.Textbox(label="Thema", placeholder="z.B. Buddhismus und Mitgefühl")
-            analyze_btn = gr.Button("🔍 LLM-Analyse starten", variant="primary")
+                def show_cfg():
+                    c = load_config()
+                    p = c.get("API_PROVIDER", "custom")
+                    pr = PROVIDER_PRESETS.get(p, {}).get("label_de", p)
+                    k_ok = "✅ gesetzt" if c["API_KEY"] else "❌ nicht gesetzt"
+                    return gr.update(value=(
+                        f"Aktuelle Konfiguration:\n"
+                        f"- Anbieter: {pr}\n"
+                        f"- API Key: {k_ok}\n"
+                        f"- Base URL: {c['BASE_URL'] or 'nicht gesetzt'}\n"
+                        f"- Modell: {c['LLM_MODEL'] or 'nicht gesetzt'}\n"
+                        f"- Audio-Ausgabe: {c['OUTPUT_AUDIO']}\n"
+                        f"- Transkript-Cache: {c['OUTPUT_TRANSCRIPT']}\n"
+                    ))
+                show_btn.click(fn=show_cfg, outputs=[cfg_disp])
 
-            gr.Markdown("### Gefundene Passagen")
-            passages_out = gr.Textbox(lines=12, interactive=False, label="Gefundene relevante Passagen")
-
+        # Tab 1: Audio-Upload & Transkription
+        with gr.Tab("1. Einstellungen & Datei"):
             with gr.Row():
-                confirm_btn = gr.Button("✅ Schnitt bestätigen", variant="primary", visible=False)
-                retry_btn = gr.Button("🔄 Erneut suchen mit geändertem Thema")
+                audio_upload = gr.File(label="Podcast-Datei (MP3/WAV)", file_types=[".mp3", ".wav"])
+                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="z.B. Buddhismus und Mitgefühl")
+            with gr.Row():
+                p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API-Anbieter")
+                m_input = gr.Textbox(label="LLM-Modell", value=cfg.get("LLM_MODEL", ""), placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
+                k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... oder sk-...")
+            p_btn = gr.Button("🚀 Transkribieren & Analysieren", variant="primary")
 
-        # === TAB 3: Schnitt & Download ===
-        with gr.Group(visible=False) as tab3:
-            gr.Markdown("## 3. Geschnittener Podcast")
+        # Tab 2: Ergebnisse & Bestätigung
+        with gr.Tab("2. Ergebnisse & Bestätigung"):
+            trans_out = gr.Textbox(label="Vollständiges Transkript (mit Zeitcodes)", lines=15, interactive=False)
+            pass_out = gr.Textbox(label="Relevante Passagen (markiert)", lines=15, interactive=False)
+            with gr.Row():
+                confirm_btn = gr.Button("✅ Schnitt bestätigen", variant="primary")
+                reject_btn = gr.Button("❌ Nicht zustimmen / Feedback", variant="stop")
+            f_input = gr.Textbox(label="Feedback (was soll verbessert werden?)", placeholder="z.B. 'Zu wenig Fokus auf Karma' oder 'Passagen 3 & 5 sind zu lang'")
+            r_btn2 = gr.Button("🔄 Mit Feedback erneut analysieren")
+
+        # Tab 3: Schnitt & Download
+        with gr.Tab("3. Schnitt & Download"):
             a_out = gr.Audio(label="Geschnittener Podcast", type="filepath")
             d_info = gr.Markdown("")
 
-        # --- Callbacks Tab 2 ---
-
-        def do_analyze(theme, audio_path, segments):
-            if audio_path is None:
-                return ("Bitte zuerst Audio hochladen und transkribieren.", [], gr.update(visible=False))
-            if not theme.strip():
-                return ("Bitte geben Sie ein Thema ein.", [], gr.update(visible=False))
-
-            preset = PROVIDER_PRESETS.get(cfg.get("API_PROVIDER", "custom"), PROVIDER_PRESETS["custom"])
+        # Callbacks
+        def on_process(audio_file, theme, prov, model, url, key):
+            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
+            if audio_file is None:
+                return (
+                    "Bitte laden Sie zuerst eine Audio-Datei hoch.",
+                    "", None, None, None, theme,
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                )
+            segments, language = transcribe_audio(audio_file.name)
+            t_text = format_transcript(segments)
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            base_url = cfg.get("BASE_URL", "")
-            api_key = cfg.get("API_KEY", "")
-            llm_model = cfg.get("LLM_MODEL", "")
-
             passages = analyze_transcript(segments, theme, llm_model, base_url, api_key, auth, "de")
             p_text = format_passages(passages, "de")
-
             return (
+                t_text,
                 p_text,
+                audio_file.name,
+                segments,
                 passages,
-                gr.update(visible=len(passages) > 0),
+                theme,
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
             )
 
-        analyze_btn.click(
-            fn=do_analyze,
-            inputs=[theme_input, state_audio_path, state_segments],
-            outputs=[passages_out, state_passages, confirm_btn],
+        def on_confirm(a_path, passages):
+            try:
+                if a_path is None or not passages:
+                    return gr.update(visible=False), "Fehler: Keine Audio-Datei oder keine Passagen vorhanden."
+                out = cfg["OUTPUT_AUDIO"]
+                trim_audio(a_path, passages, out)
+                return gr.update(value=out, visible=True), f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out}"
+            except Exception as e:
+                print(f"FEHLER beim Audio-Schnitt: {e}")
+                return gr.update(visible=False), f"Fehler beim Schnitt: {e}"
+
+        def on_reject(feedback, cur_theme):
+            nt = cur_theme
+            if feedback.strip():
+                nt = f"{cur_theme} ({feedback.strip()})"
+            return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
+
+        def on_retry(a_path, theme, prov, model, url, key, feedback):
+            if a_path is None:
+                return "", "", None, None, None, theme
+            segments, _ = transcribe_audio(a_path.name)
+            et = theme
+            if feedback.strip():
+                et = f"{theme} ({feedback.strip()})"
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
+            auth = preset.get("auth_header", "Bearer")
+            passages = analyze_transcript(segments, et, model, url, key, auth, "de")
+            return (
+                format_transcript(segments),
+                format_passages(passages, "de"),
+                a_path,
+                segments,
+                passages,
+                et,
+            )
+
+        p_btn.click(
+            fn=on_process,
+            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
+            outputs=[
+                transcript_out,
+                pass_out,
+                state_audio_path,
+                state_segments,
+                state_passages,
+                state_theme,
+                trans_out,
+                pass_out,
+                confirm_btn,
+                reject_btn,
+                f_input,
+                r_btn2,
+                a_out,
+                d_info,
+            ],
         )
 
-        def do_confirm(a_path, passages):
-            if a_path is None or not passages:
-                return gr.update(visible=False), "Fehler: Keine Audio-Datei oder keine Passagen vorhanden."
-            out = cfg["OUTPUT_AUDIO"]
-            trim_audio(a_path, passages, out)
-            return gr.update(value=out, visible=True), f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out}"
-
-        confirm_btn.click(
-            fn=do_confirm,
+        c_btn.click(
+            fn=on_confirm,
             inputs=[state_audio_path, state_passages],
             outputs=[a_out, d_info],
         )
 
-        def do_retry():
-            return ([], gr.update(visible=False), "")
-
-        retry_btn.click(
-            fn=do_retry,
-            inputs=None,
-            outputs=[state_passages, confirm_btn, theme_input],
+        r_btn.click(
+            fn=on_reject,
+            inputs=[f_input, state_theme],
+            outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2],
         )
 
-        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
-        go_to_tab2_btn.click(
-            fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
-            inputs=None,
-            outputs=[tab1, tab2, tab3],
+        r_btn2.click(
+            fn=on_retry,
+            inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input],
+            outputs=[trans_out, pass_out,
+                     state_audio_path, state_segments, state_passages, state_theme],
         )
 
     return demo
@@ -617,132 +690,200 @@ def build_en():
         state_segments = gr.State(None)
         state_passages = gr.State(None)
 
-        # === TAB 1: Audio-Upload & Transkription ===
-        with gr.Group() as tab1:
-            gr.Markdown("## 1. Upload audio file & transcribe")
-            audio_upload = gr.File(label="Podcast File (MP3/WAV)", file_types=[".mp3", ".wav"])
-            transcribe_btn = gr.Button("🎙️ Transcribe", variant="primary")
-            transcript_out = gr.Textbox(label="Transcript", lines=12, interactive=False)
-            transcribe_status = gr.Markdown("")
-            go_to_tab2_btn = gr.Button("➡️ Go to Results & Confirmation", visible=False)
-
-            def do_transcribe(audio_file):
-                if audio_file is None:
-                    return (
-                        gr.update(visible=False),
-                        gr.update(visible=False),
-                        "Please upload an audio file first.",
-                        "",
-                        None,
-                        None,
-                        None,
-                    )
-                segments, language = transcribe_audio(audio_file.name)
-                t_text = format_transcript(segments)
-                return (
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                    t_text,
-                    "",
-                    audio_file.name,
-                    segments,
-                    None,
+        with gr.Tab("0. 🔧 Setup" if not configured else "0. ✅ Setup"):
+            gr.Markdown("## First-Time Setup")
+            if not configured:
+                gr.Markdown("### Select API provider and enter credentials\n\nChoose the LLM provider you want to use for topic analysis. All OpenAI-compatible APIs are supported.")
+                setup_provider = gr.Dropdown(
+                    choices=list(PROVIDER_PRESETS.keys()),
+                    value="nvidia-nim",
+                    label="API Provider",
+                    info="Which LLM API do you want to use?",
                 )
+                setup_help = gr.Markdown(PROVIDER_PRESETS["nvidia-nim"]["help_en"])
+                with gr.Row():
+                    s_api = gr.Textbox(label="API Key", type="password", placeholder="nvapi-... or sk-...")
+                    s_url = gr.Textbox(label="Base URL", value=PROVIDER_PRESETS["nvidia-nim"]["base_url"], placeholder="https://integrate.api.nvidia.com/v1")
+                    s_model = gr.Textbox(label="LLM Model", value=PROVIDER_PRESETS["nvidia-nim"]["model"], placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                with gr.Row():
+                    s_out_audio = gr.Textbox(label="Output file for cut MP3", value=DEFAULT_OUTPUT_AUDIO, placeholder="/path/to/output.mp3")
+                    s_out_trans = gr.Textbox(label="Output file for transcript cache", value=DEFAULT_OUTPUT_TRANSCRIPT, placeholder="/path/to/transcript.json")
+                s_save = gr.Button("💾 Save Configuration", variant="primary")
+                s_status = gr.Markdown("")
 
-            transcribe_btn.click(
-                fn=do_transcribe,
-                inputs=[audio_upload],
-                outputs=[
-                    transcript_out,
-                    go_to_tab2_btn,
-                    transcript_out,
-                    transcribe_status,
-                    state_audio_path,
-                    state_segments,
-                    state_passages,
-                ],
-            )
+                def upd_help(provider):
+                    return gr.update(value=PROVIDER_PRESETS[provider]["help_en"])
+                setup_provider.change(fn=upd_help, inputs=[setup_provider], outputs=[setup_help])
 
-        # === TAB 2: Topics analysis & passage selection ===
-        with gr.Group(visible=False) as tab2:
-            gr.Markdown("## 2. Topic analysis & passage selection")
+                def do_setup(prov, key, url, model, out_a, out_t):
+                    if not key or not url or not model:
+                        return gr.update(value="❌ Please fill in all required fields (API Key, Base URL, Model).")
+                    ok, msg = save_config(prov, key, url, model, out_a, out_t)
+                    if ok:
+                        return gr.update(value="✅ Configuration saved to .env\nYou can now switch to Tab '1. Upload audio file' and use the program.")
+                    return gr.update(value=f"❌ {msg}")
 
-            gr.Markdown("### Transcript (for reading)")
-            transcript_display = gr.Textbox(lines=12, interactive=False, label="Transcript")
+                s_save.click(fn=do_setup,
+                             inputs=[setup_provider, s_api, s_url, s_model, s_out_audio, s_out_trans],
+                             outputs=[s_status])
+            else:
+                gr.Markdown("Your configuration is already saved (`.env`). You can now use the program.\nTo change settings, edit the `.env` file directly or delete it and restart the program.")
+                with gr.Row():
+                    show_btn = gr.Button("📋 Show Configuration")
+                cfg_disp = gr.Markdown("")
 
-            gr.Markdown("### Enter topic for LLM search")
-            theme_input = gr.Textbox(label="Topic", placeholder="e.g. Buddhism and Compassion")
-            analyze_btn = gr.Button("🔍 Start LLM analysis", variant="primary")
+                def show_cfg():
+                    c = load_config()
+                    p = c.get("API_PROVIDER", "custom")
+                    pr = PROVIDER_PRESETS.get(p, {}).get("label_en", p)
+                    k_ok = "✅ set" if c["API_KEY"] else "❌ not set"
+                    return gr.update(value=(
+                        f"Current Configuration:\n"
+                        f"- Provider: {pr}\n"
+                        f"- API Key: {k_ok}\n"
+                        f"- Base URL: {c['BASE_URL'] or 'not set'}\n"
+                        f"- Model: {c['LLM_MODEL'] or 'not set'}\n"
+                        f"- Audio Output: {c['OUTPUT_AUDIO']}\n"
+                        f"- Transcript Cache: {c['OUTPUT_TRANSCRIPT']}\n"
+                    ))
+                show_btn.click(fn=show_cfg, outputs=[cfg_disp])
 
-            gr.Markdown("### Found passages")
-            passages_out = gr.Textbox(lines=12, interactive=False, label="Found relevant passages")
-
+        with gr.Tab("1. Upload audio file & transcribe"):
             with gr.Row():
-                confirm_btn = gr.Button("✅ Confirm Cut", variant="primary", visible=False)
-                retry_btn = gr.Button("🔄 Search again with changed topic")
+                audio_upload = gr.File(label="Podcast File (MP3/WAV)", file_types=[".mp3", ".wav"])
+                theme_input = gr.Textbox(label="Topic for LLM Search", value=DEFAULT_THEME_EN, placeholder="e.g. Buddhism and Compassion")
+            with gr.Row():
+                p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API Provider")
+                m_input = gr.Textbox(label="LLM Model", value=cfg.get("LLM_MODEL", ""), placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
+                b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
+                k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... or sk-...")
+            p_btn = gr.Button("🚀 Transcribe & Analyze", variant="primary")
 
-        # === TAB 3: Cut & Download ===
-        with gr.Group(visible=False) as tab3:
-            gr.Markdown("## 3. Cut Podcast")
+        with gr.Tab("2. Results & Confirmation"):
+            trans_out = gr.Textbox(label="Full Transcript (with Timecodes)", lines=15, interactive=False)
+            pass_out = gr.Textbox(label="Relevant Passages (marked)", lines=15, interactive=False)
+            with gr.Row():
+                c_btn = gr.Button("✅ Confirm Cut", variant="primary")
+                r_btn = gr.Button("❌ Not accepted / Feedback", variant="stop")
+            f_input = gr.Textbox(label="Feedback (what should be improved?)", placeholder="e.g. 'Too little focus on Karma' or 'Passages 3 & 5 too long'")
+            r_btn2 = gr.Button("🔄 Analyze again with feedback")
+
+        with gr.Tab("3. Cut & Download"):
             a_out = gr.Audio(label="Cut Podcast", type="filepath")
             d_info = gr.Markdown("")
 
-        # --- Callbacks Tab 2 ---
-
-        def do_analyze(theme, audio_path, segments):
-            if audio_path is None:
-                return ("Please upload and transcribe audio first.", [], gr.update(visible=False))
-            if not theme.strip():
-                return ("Please enter a topic.", [], gr.update(visible=False))
-
-            preset = PROVIDER_PRESETS.get(cfg.get("API_PROVIDER", "custom"), PROVIDER_PRESETS["custom"])
+        def on_process(audio_file, theme, prov, model, url, key):
+            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
+            if audio_file is None:
+                return (
+                    "Please upload an audio file first.",
+                    "", None, None, None, theme,
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                )
+            segments, language = transcribe_audio(audio_file.name)
+            t_text = format_transcript(segments)
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            base_url = cfg.get("BASE_URL", "")
-            api_key = cfg.get("API_KEY", "")
-            llm_model = cfg.get("LLM_MODEL", "")
-
-            passages = analyze_transcript(segments, theme, llm_model, base_url, api_key, auth, "en")
+            passages = analyze_transcript(segments, theme, llm_model, url, key, auth, "en")
             p_text = format_passages(passages, "en")
-
             return (
+                t_text,
                 p_text,
+                audio_file.name,
+                segments,
                 passages,
-                gr.update(visible=len(passages) > 0),
+                theme,
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
             )
 
-        analyze_btn.click(
-            fn=do_analyze,
-            inputs=[theme_input, state_audio_path, state_segments],
-            outputs=[passages_out, state_passages, confirm_btn],
+        def on_confirm(a_path, passages):
+            try:
+                if a_path is None or not passages:
+                    return gr.update(visible=False), "Error: No audio file or no passages available."
+                out = cfg["OUTPUT_AUDIO"]
+                trim_audio(a_path, passages, out)
+                return gr.update(value=out, visible=True), f"✅ Success! Cut audio track saved to: {out}"
+            except Exception as e:
+                print(f"FEHLER beim Audio-Schnitt: {e}")
+                return gr.update(visible=False), f"Error during cut: {e}"
+
+        def on_reject(feedback, cur_theme):
+            nt = cur_theme
+            if feedback.strip():
+                nt = f"{cur_theme} ({feedback.strip()})"
+            return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
+
+        def on_retry(a_path, theme, prov, model, url, key, feedback):
+            if a_path is None:
+                return "", "", None, None, None, theme
+            segments, _ = transcribe_audio(a_path.name)
+            et = theme
+            if feedback.strip():
+                et = f"{theme} ({feedback.strip()})"
+            preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
+            auth = preset.get("auth_header", "Bearer")
+            passages = analyze_transcript(segments, et, model, url, key, auth, "en")
+            return (
+                format_transcript(segments),
+                format_passages(passages, "en"),
+                a_path,
+                segments,
+                passages,
+                et,
+            )
+
+        p_btn.click(
+            fn=on_process,
+            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
+            outputs=[
+                trans_out,
+                pass_out,
+                state_audio_path,
+                state_segments,
+                state_passages,
+                state_theme,
+                trans_out,
+                pass_out,
+                c_btn,
+                r_btn,
+                f_input,
+                r_btn2,
+                a_out,
+                d_info,
+            ],
         )
 
-        def do_confirm(a_path, passages):
-            if a_path is None or not passages:
-                return gr.update(visible=False), "Error: No audio file or no passages available."
-            out = cfg["OUTPUT_AUDIO"]
-            trim_audio(a_path, passages, out)
-            return gr.update(value=out, visible=True), f"✅ Success! Cut audio track saved to: {out}"
-
-        confirm_btn.click(
-            fn=do_confirm,
+        c_btn.click(
+            fn=on_confirm,
             inputs=[state_audio_path, state_passages],
             outputs=[a_out, d_info],
         )
 
-        def do_retry():
-            return ([], gr.update(visible=False), "")
-
-        retry_btn.click(
-            fn=do_retry,
-            inputs=None,
-            outputs=[state_passages, confirm_btn, theme_input],
+        r_btn.click(
+            fn=on_reject,
+            inputs=[f_input, state_theme],
+            outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2],
         )
 
-        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
-        go_to_tab2_btn.click(
-            fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
-            inputs=None,
-            outputs=[tab1, tab2, tab3],
+        retry_btn.click(
+            fn=on_retry,
+            inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input],
+            outputs=[trans_out, pass_out,
+                     state_audio_path, state_segments, state_passages, state_theme],
         )
 
     return demo
