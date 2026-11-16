@@ -516,12 +516,6 @@ def build_de():
                 ],
             )
 
-            go_to_tab2_btn.click(
-                fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
-                inputs=None,
-                outputs=[tab1, tab2, tab3],
-            )
-
         # === TAB 2: Themenanalyse & Passagen-Auswahl ===
         with gr.Group(visible=False) as tab2:
             gr.Markdown("## 2. Themenanalyse & Passagen-Auswahl")
@@ -597,6 +591,13 @@ def build_de():
             outputs=[state_passages, confirm_btn, theme_input],
         )
 
+        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
+        go_to_tab2_btn.click(
+            fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
+            inputs=None,
+            outputs=[tab1, tab2, tab3],
+        )
+
     return demo
 
 
@@ -660,12 +661,6 @@ def build_en():
                     state_segments,
                     state_passages,
                 ],
-            )
-
-            go_to_tab2_btn.click(
-                fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
-                inputs=None,
-                outputs=[tab1, tab2, tab3],
             )
 
         # === TAB 2: Topics analysis & passage selection ===
@@ -741,6 +736,13 @@ def build_en():
             fn=do_retry,
             inputs=None,
             outputs=[state_passages, confirm_btn, theme_input],
+        )
+
+        # Sprachumschalter an alle registrierten UI-Komponenten binden (nach deren Erstellung)
+        go_to_tab2_btn.click(
+            fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
+            inputs=None,
+            outputs=[tab1, tab2, tab3],
         )
 
     return demo
