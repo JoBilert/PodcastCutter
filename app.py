@@ -191,6 +191,7 @@ def load_config():
         "LLM_MODEL": DEFAULT_LLM_MODEL,
         "OUTPUT_AUDIO": DEFAULT_OUTPUT_AUDIO,
         "OUTPUT_TRANSCRIPT": DEFAULT_OUTPUT_TRANSCRIPT,
+        "OUTPUT_FORMAT": "audio",
     }
     if os.path.exists(KEY_FILE):
         try:
@@ -209,12 +210,14 @@ def load_config():
                         config["OUTPUT_AUDIO"] = line.split("=", 1)[1]
                     elif line.startswith("OUTPUT_TRANSCRIPT="):
                         config["OUTPUT_TRANSCRIPT"] = line.split("=", 1)[1]
+                    elif line.startswith("OUTPUT_FORMAT="):
+                        config["OUTPUT_FORMAT"] = line.split("=", 1)[1]
         except Exception:
             pass
     return config
 
 
-def save_config(provider, api_key, base_url, llm_model, output_audio, output_transcript):
+def save_config(provider, api_key, base_url, llm_model, output_audio, output_transcript, output_format="audio"):
     lines = [
         f"API_PROVIDER={provider}",
         f"API_KEY={api_key}",
@@ -222,6 +225,7 @@ def save_config(provider, api_key, base_url, llm_model, output_audio, output_tra
         f"LLM_MODEL={llm_model}",
         f"OUTPUT_AUDIO={output_audio}",
         f"OUTPUT_TRANSCRIPT={output_transcript}",
+        f"OUTPUT_FORMAT={output_format}",
     ]
     try:
         with open(KEY_FILE, "w", encoding="utf-8") as f:
@@ -421,6 +425,35 @@ def trim_audio(audio_path, relevant_passages, output_path):
     return output_path
 
 
+def extract_audio(video_path, output_audio_path):
+    """Extrahiert die Audiospur aus einer Videodatei via ffmpeg."""
+    import subprocess
+    cmd = [
+        "ffmpeg", "-i", video_path,
+        "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1",
+        "-y", output_audio_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_audio_path
+
+
+def trim_video(video_path, relevant_passages, output_path):
+    """Schneidet einen Videobereich aus, basierend auf den markierten Passagen."""
+    import subprocess
+    sorted_passages = sorted(relevant_passages, key=lambda x: x["start"])
+    if not sorted_passages:
+        raise ValueError("Keine Passagen zum Schneiden vorhanden.")
+    start_ms = int(sorted_passages[0]["start"] * 1000)
+    end_ms = int(sorted_passages[-1]["end"] * 1000)
+    cmd = [
+        "ffmpeg", "-i", video_path,
+        "-ss", str(start_ms / 1000), "-to", str(end_ms / 1000),
+        "-c", "copy", "-y", output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_path
+
+
 # ---------------------------------------------------------------------------
 # Format-Hilfen
 # ---------------------------------------------------------------------------
@@ -533,13 +566,20 @@ def build_de():
         # Tab 1: Audio-Upload & Transkription
         with gr.Tab("1. Einstellungen & Datei"):
             with gr.Row():
-                audio_upload = gr.File(label="Podcast-Datei (MP3/WAV)", file_types=[".mp3", ".wav"])
-                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="Hier Thema eingeben")
+                audio_upload = gr.File(label="Audio- oder Videodatei (MP3/WAV/MP4/MKV)", file_types=[".mp3", ".wav", ".mp4", ".mkv", ".avi", ".mov", ".webm"])
+                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="z.B. Buddhismus und Mitgefühl")
             with gr.Row():
                 p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API-Anbieter")
                 m_input = gr.Textbox(label="LLM-Modell", value=cfg.get("LLM_MODEL", ""), placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b")
                 b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
                 k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... oder sk-...")
+            with gr.Row():
+                output_format = gr.Dropdown(
+                    choices=["audio", "video"],
+                    value=cfg.get("OUTPUT_FORMAT", "audio"),
+                    label="Ausgabeformat",
+                    info="audio = geschnittenes MP3, video = geschnittenes MP4",
+                )
             p_btn = gr.Button("🚀 Transkribieren & Analysieren", variant="primary")
 
         # Tab 2: Ergebnisse & Bestätigung
@@ -553,15 +593,16 @@ def build_de():
 
         # Tab 3: Schnitt & Download
         with gr.Tab("3. Schnitt & Download"):
-            a_out = gr.Audio(label="Geschnittener Podcast", type="filepath")
+            a_out = gr.Audio(label="Geschnittener Podcast", type="filepath", visible=False)
+            v_out = gr.Video(label="Geschnittenes Video", type="filepath", visible=False)
             d_info = gr.Markdown("")
 
         # Callbacks
-        def on_process(audio_file, theme, prov, model, url, key):
-            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
+        def on_process(audio_file, theme, prov, model, url, key, output_format):
+            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"], output_format)
             if audio_file is None:
                 return (
-                    "Bitte laden Sie zuerst eine Audio-Datei hoch.",
+                    "Bitte laden Sie zuerst eine Audio- oder Videodatei hoch.",
                     "", None, None, None, theme,
                     gr.update(visible=True),
                     gr.update(visible=True),
@@ -572,7 +613,12 @@ def build_de():
                     gr.update(visible=False),
                     gr.update(visible=False),
                 )
-            segments, language = transcribe_audio(audio_file.name)
+            file_ext = os.path.splitext(audio_file.name)[1].lower()
+            work_path = audio_file.name
+            if file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                work_path = os.path.splitext(audio_file.name)[0] + "_extracted.mp3"
+                extract_audio(audio_file.name, work_path)
+            segments, language = transcribe_audio(work_path)
             t_text = format_transcript(segments)
             gr.Info("Transkription fertig. Bitte wechseln Sie zu Tab 2 'Ergebnisse & Bestätigung'.")
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
@@ -591,26 +637,35 @@ def build_de():
                 gr.update(visible=True),
                 gr.update(visible=True),
                 gr.update(visible=True),
-                gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),
             )
 
-        def on_confirm(a_path, passages):
+        def on_confirm(a_path, passages, output_format):
             try:
                 if a_path is None or not passages:
-                    return gr.update(visible=False), "Fehler: Keine Audio-Datei oder keine Passagen vorhanden."
-                out = cfg["OUTPUT_AUDIO"]
-                trim_audio(a_path, passages, out)
-                return gr.update(value=out, visible=True), f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out}"
+                    return gr.update(visible=False), gr.update(visible=False), "Fehler: Keine Audio- oder Videodatei oder keine Passagen vorhanden."
+                file_ext = os.path.splitext(a_path)[1].lower()
+                out = cfg["OUTPUT_AUDIO"] if output_format == "audio" else cfg["OUTPUT_AUDIO"].replace(".mp3", ".mp4")
+                if output_format == "video" and file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                    trim_video(a_path, passages, out)
+                    return gr.update(visible=False), gr.update(value=out, visible=True), f"✅ Erfolg! Geschnittenes Video gespeichert unter: {out}"
+                else:
+                    trim_audio(a_path, passages, out)
+                    return gr.update(value=out, visible=True), gr.update(visible=False), f"✅ Erfolg! Geschnittener Audio-Track gespeichert unter: {out}"
             except Exception as e:
                 print(f"FEHLER beim Audio-Schnitt: {e}")
-                return gr.update(visible=False), f"Fehler beim Schnitt: {e}"
+                return gr.update(visible=False), gr.update(visible=False), f"Fehler beim Schnitt: {e}"
 
         def on_retry(a_path, theme, prov, model, url, key, feedback):
             if a_path is None:
                 return "", "", None, None, None, theme
-            segments, _ = transcribe_audio(a_path.name)
+            file_ext = os.path.splitext(a_path)[1].lower()
+            work_path = a_path
+            if file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                work_path = os.path.splitext(a_path)[0] + "_extracted.mp3"
+                extract_audio(a_path, work_path)
+            segments, _ = transcribe_audio(work_path)
             et = theme
             if feedback.strip():
                 et = f"{theme} ({feedback.strip()})"
@@ -628,7 +683,7 @@ def build_de():
 
         p_btn.click(
             fn=on_process,
-            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
+            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input, output_format],
             outputs=[
                 trans_out,
                 pass_out,
@@ -641,14 +696,15 @@ def build_de():
                 confirm_btn,
                 r_btn2,
                 a_out,
+                v_out,
                 d_info,
             ],
         )
 
         confirm_btn.click(
             fn=on_confirm,
-            inputs=[state_audio_path, state_passages],
-            outputs=[a_out, d_info],
+            inputs=[state_audio_path, state_passages, output_format],
+            outputs=[a_out, v_out, d_info],
         )
 
         r_btn2.click(
@@ -738,13 +794,20 @@ def build_en():
 
         with gr.Tab("1. Upload audio file & transcribe"):
             with gr.Row():
-                audio_upload = gr.File(label="Podcast File (MP3/WAV)", file_types=[".mp3", ".wav"])
+                audio_upload = gr.File(label="Audio or Video File (MP3/WAV/MP4/MKV)", file_types=[".mp3", ".wav", ".mp4", ".mkv", ".avi", ".mov", ".webm"])
                 theme_input = gr.Textbox(label="Topic for LLM Search", value=DEFAULT_THEME_EN, placeholder="Enter topic here")
             with gr.Row():
                 p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API Provider")
                 m_input = gr.Textbox(label="LLM Model", value=cfg.get("LLM_MODEL", ""), placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
                 b_input = gr.Textbox(label="Base URL", value=cfg.get("BASE_URL", ""), placeholder="https://integrate.api.nvidia.com/v1")
                 k_input = gr.Textbox(label="API Key", value=cfg.get("API_KEY", ""), type="password", placeholder="nvapi-... or sk-...")
+            with gr.Row():
+                output_format = gr.Dropdown(
+                    choices=["audio", "video"],
+                    value=cfg.get("OUTPUT_FORMAT", "audio"),
+                    label="Output format",
+                    info="audio = cut MP3, video = cut MP4",
+                )
             p_btn = gr.Button("🚀 Transcribe & Analyze", variant="primary")
 
         with gr.Tab("2. Results & Confirmation"):
@@ -756,14 +819,15 @@ def build_en():
             r_btn2 = gr.Button("🔄 Analyze again with feedback")
 
         with gr.Tab("3. Cut & Download"):
-            a_out = gr.Audio(label="Cut Podcast", type="filepath")
+            a_out = gr.Audio(label="Cut Podcast", type="filepath", visible=False)
+            v_out = gr.Video(label="Cut Video", type="filepath", visible=False)
             d_info = gr.Markdown("")
 
-        def on_process(audio_file, theme, prov, model, url, key):
-            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"])
+        def on_process(audio_file, theme, prov, model, url, key, output_format):
+            save_config(prov, key, url, model, cfg["OUTPUT_AUDIO"], cfg["OUTPUT_TRANSCRIPT"], output_format)
             if audio_file is None:
                 return (
-                    "Please upload an audio file first.",
+                    "Please upload an audio or video file first.",
                     "", None, None, None, theme,
                     gr.update(visible=True),
                     gr.update(visible=True),
@@ -774,7 +838,12 @@ def build_en():
                     gr.update(visible=False),
                     gr.update(visible=False),
                 )
-            segments, language = transcribe_audio(audio_file.name)
+            file_ext = os.path.splitext(audio_file.name)[1].lower()
+            work_path = audio_file.name
+            if file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                work_path = os.path.splitext(audio_file.name)[0] + "_extracted.mp3"
+                extract_audio(audio_file.name, work_path)
+            segments, language = transcribe_audio(work_path)
             t_text = format_transcript(segments)
             gr.Info("Transcription complete. Please switch to Tab 2 'Results & Confirmation'.")
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
@@ -793,26 +862,35 @@ def build_en():
                 gr.update(visible=True),
                 gr.update(visible=True),
                 gr.update(visible=True),
-                gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),
             )
 
-        def on_confirm(a_path, passages):
+        def on_confirm(a_path, passages, output_format):
             try:
                 if a_path is None or not passages:
-                    return gr.update(visible=False), "Error: No audio file or no passages available."
-                out = cfg["OUTPUT_AUDIO"]
-                trim_audio(a_path, passages, out)
-                return gr.update(value=out, visible=True), f"✅ Success! Cut audio track saved to: {out}"
+                    return gr.update(visible=False), gr.update(visible=False), "Error: No audio or video file or no passages available."
+                file_ext = os.path.splitext(a_path)[1].lower()
+                out = cfg["OUTPUT_AUDIO"] if output_format == "audio" else cfg["OUTPUT_AUDIO"].replace(".mp3", ".mp4")
+                if output_format == "video" and file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                    trim_video(a_path, passages, out)
+                    return gr.update(visible=False), gr.update(value=out, visible=True), f"✅ Success! Cut video saved to: {out}"
+                else:
+                    trim_audio(a_path, passages, out)
+                    return gr.update(value=out, visible=True), gr.update(visible=False), f"✅ Success! Cut audio track saved to: {out}"
             except Exception as e:
                 print(f"FEHLER beim Audio-Schnitt: {e}")
-                return gr.update(visible=False), f"Error during cut: {e}"
+                return gr.update(visible=False), gr.update(visible=False), f"Error during cut: {e}"
 
         def on_retry(a_path, theme, prov, model, url, key, feedback):
             if a_path is None:
                 return "", "", None, None, None, theme
-            segments, _ = transcribe_audio(a_path.name)
+            file_ext = os.path.splitext(a_path)[1].lower()
+            work_path = a_path
+            if file_ext in (".mp4", ".mkv", ".avi", ".mov", ".webm"):
+                work_path = os.path.splitext(a_path)[0] + "_extracted.mp3"
+                extract_audio(a_path, work_path)
+            segments, _ = transcribe_audio(work_path)
             et = theme
             if feedback.strip():
                 et = f"{theme} ({feedback.strip()})"
@@ -830,7 +908,7 @@ def build_en():
 
         p_btn.click(
             fn=on_process,
-            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
+            inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input, output_format],
             outputs=[
                 trans_out,
                 pass_out,
@@ -843,14 +921,15 @@ def build_en():
                 c_btn,
                 r_btn2,
                 a_out,
+                v_out,
                 d_info,
             ],
         )
 
         c_btn.click(
             fn=on_confirm,
-            inputs=[state_audio_path, state_passages],
-            outputs=[a_out, d_info],
+            inputs=[state_audio_path, state_passages, output_format],
+            outputs=[a_out, v_out, d_info],
         )
 
         r_btn2.click(
