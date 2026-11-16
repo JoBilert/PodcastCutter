@@ -37,8 +37,8 @@ import urllib.request
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KEY_FILE = os.path.join(BASE_DIR, ".env")
 
-DEFAULT_THEME_DE = "Suchbegriff hier eingeben"
-DEFAULT_THEME_EN = "Search term here"
+DEFAULT_THEME_DE = ""
+DEFAULT_THEME_EN = ""
 DEFAULT_LLM_MODEL = ""
 DEFAULT_BASE_URL = ""
 DEFAULT_API_KEY = ""
@@ -469,6 +469,7 @@ def build_de():
         state_audio_path = gr.State(None)
         state_segments = gr.State(None)
         state_passages = gr.State(None)
+        state_theme = gr.State(None)
 
         # Tab 0: Einrichtung
         with gr.Tab("0. 🔧 Einrichtung" if not configured else "0. ✅ Einrichtung"):
@@ -533,7 +534,7 @@ def build_de():
         with gr.Tab("1. Einstellungen & Datei"):
             with gr.Row():
                 audio_upload = gr.File(label="Podcast-Datei (MP3/WAV)", file_types=[".mp3", ".wav"])
-                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="z.B. Buddhismus und Mitgefühl")
+                theme_input = gr.Textbox(label="Thema für LLM-Suche", value=DEFAULT_THEME_DE, placeholder="Hier Thema eingeben")
             with gr.Row():
                 p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API-Anbieter")
                 m_input = gr.Textbox(label="LLM-Modell", value=cfg.get("LLM_MODEL", ""), placeholder="z. B. nvidia/nemotron-3.5-super-vl-120b-a12b")
@@ -547,8 +548,7 @@ def build_de():
             pass_out = gr.Textbox(label="Relevante Passagen (markiert)", lines=15, interactive=False)
             with gr.Row():
                 confirm_btn = gr.Button("✅ Schnitt bestätigen", variant="primary")
-                reject_btn = gr.Button("❌ Nicht zustimmen / Feedback", variant="stop")
-            f_input = gr.Textbox(label="Feedback (was soll verbessert werden?)", placeholder="z.B. 'Zu wenig Fokus auf Karma' oder 'Passagen 3 & 5 sind zu lang'")
+            f_input = gr.Textbox(label="Feedback (was soll verbessert werden?)", placeholder="z.B. 'Passage X ist zu lang od. Begriff Y kommt nicht vor'")
             r_btn2 = gr.Button("🔄 Mit Feedback erneut analysieren")
 
         # Tab 3: Schnitt & Download
@@ -574,9 +574,10 @@ def build_de():
                 )
             segments, language = transcribe_audio(audio_file.name)
             t_text = format_transcript(segments)
+            gr.Info("Transkription fertig. Bitte wechseln Sie zu Tab 2 'Ergebnisse & Bestätigung'.")
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            passages = analyze_transcript(segments, theme, llm_model, base_url, api_key, auth, "de")
+            passages = analyze_transcript(segments, theme, model, url, key, auth, "de")
             p_text = format_passages(passages, "de")
             return (
                 t_text,
@@ -606,12 +607,6 @@ def build_de():
                 print(f"FEHLER beim Audio-Schnitt: {e}")
                 return gr.update(visible=False), f"Fehler beim Schnitt: {e}"
 
-        def on_reject(feedback, cur_theme):
-            nt = cur_theme
-            if feedback.strip():
-                nt = f"{cur_theme} ({feedback.strip()})"
-            return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
-
         def on_retry(a_path, theme, prov, model, url, key, feedback):
             if a_path is None:
                 return "", "", None, None, None, theme
@@ -635,7 +630,7 @@ def build_de():
             fn=on_process,
             inputs=[audio_upload, theme_input, p_input, m_input, b_input, k_input],
             outputs=[
-                transcript_out,
+                trans_out,
                 pass_out,
                 state_audio_path,
                 state_segments,
@@ -644,24 +639,16 @@ def build_de():
                 trans_out,
                 pass_out,
                 confirm_btn,
-                reject_btn,
-                f_input,
                 r_btn2,
                 a_out,
                 d_info,
             ],
         )
 
-        c_btn.click(
+        confirm_btn.click(
             fn=on_confirm,
             inputs=[state_audio_path, state_passages],
             outputs=[a_out, d_info],
-        )
-
-        r_btn.click(
-            fn=on_reject,
-            inputs=[f_input, state_theme],
-            outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2],
         )
 
         r_btn2.click(
@@ -689,6 +676,7 @@ def build_en():
         state_audio_path = gr.State(None)
         state_segments = gr.State(None)
         state_passages = gr.State(None)
+        state_theme = gr.State(None)
 
         with gr.Tab("0. 🔧 Setup" if not configured else "0. ✅ Setup"):
             gr.Markdown("## First-Time Setup")
@@ -751,7 +739,7 @@ def build_en():
         with gr.Tab("1. Upload audio file & transcribe"):
             with gr.Row():
                 audio_upload = gr.File(label="Podcast File (MP3/WAV)", file_types=[".mp3", ".wav"])
-                theme_input = gr.Textbox(label="Topic for LLM Search", value=DEFAULT_THEME_EN, placeholder="e.g. Buddhism and Compassion")
+                theme_input = gr.Textbox(label="Topic for LLM Search", value=DEFAULT_THEME_EN, placeholder="Enter topic here")
             with gr.Row():
                 p_input = gr.Dropdown(choices=list(PROVIDER_PRESETS.keys()), value=cfg.get("API_PROVIDER", "custom"), label="API Provider")
                 m_input = gr.Textbox(label="LLM Model", value=cfg.get("LLM_MODEL", ""), placeholder="e.g. nvidia/nemotron-3.5-super-vl-120b-a12b")
@@ -764,8 +752,7 @@ def build_en():
             pass_out = gr.Textbox(label="Relevant Passages (marked)", lines=15, interactive=False)
             with gr.Row():
                 c_btn = gr.Button("✅ Confirm Cut", variant="primary")
-                r_btn = gr.Button("❌ Not accepted / Feedback", variant="stop")
-            f_input = gr.Textbox(label="Feedback (what should be improved?)", placeholder="e.g. 'Too little focus on Karma' or 'Passages 3 & 5 too long'")
+            f_input = gr.Textbox(label="Feedback (what should be improved?)", placeholder="e.g. 'Passage X is too long or Term Y doesn't come up'")
             r_btn2 = gr.Button("🔄 Analyze again with feedback")
 
         with gr.Tab("3. Cut & Download"):
@@ -789,9 +776,10 @@ def build_en():
                 )
             segments, language = transcribe_audio(audio_file.name)
             t_text = format_transcript(segments)
+            gr.Info("Transcription complete. Please switch to Tab 2 'Results & Confirmation'.")
             preset = PROVIDER_PRESETS.get(prov, PROVIDER_PRESETS["custom"])
             auth = preset.get("auth_header", "Bearer")
-            passages = analyze_transcript(segments, theme, llm_model, url, key, auth, "en")
+            passages = analyze_transcript(segments, theme, model, url, key, auth, "en")
             p_text = format_passages(passages, "en")
             return (
                 t_text,
@@ -820,12 +808,6 @@ def build_en():
             except Exception as e:
                 print(f"FEHLER beim Audio-Schnitt: {e}")
                 return gr.update(visible=False), f"Error during cut: {e}"
-
-        def on_reject(feedback, cur_theme):
-            nt = cur_theme
-            if feedback.strip():
-                nt = f"{cur_theme} ({feedback.strip()})"
-            return "", nt, gr.update(value=nt), gr.update(visible=True), gr.update(visible=False)
 
         def on_retry(a_path, theme, prov, model, url, key, feedback):
             if a_path is None:
@@ -859,8 +841,6 @@ def build_en():
                 trans_out,
                 pass_out,
                 c_btn,
-                r_btn,
-                f_input,
                 r_btn2,
                 a_out,
                 d_info,
@@ -873,13 +853,7 @@ def build_en():
             outputs=[a_out, d_info],
         )
 
-        r_btn.click(
-            fn=on_reject,
-            inputs=[f_input, state_theme],
-            outputs=[pass_out, state_theme, theme_input, pass_out, r_btn2],
-        )
-
-        retry_btn.click(
+        r_btn2.click(
             fn=on_retry,
             inputs=[state_audio_path, state_theme, p_input, m_input, b_input, k_input, f_input],
             outputs=[trans_out, pass_out,
