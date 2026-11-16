@@ -594,7 +594,7 @@ def build_de():
         # Tab 3: Schnitt & Download
         with gr.Tab("3. Schnitt & Download"):
             a_out = gr.Audio(label="Geschnittener Podcast", type="filepath", visible=False)
-            v_out = gr.Video(label="Geschnittenes Video", type="filepath", visible=False)
+            v_out = gr.Video(label="Geschnittenes Video", visible=False)
             d_info = gr.Markdown("")
 
         # Callbacks
@@ -820,7 +820,7 @@ def build_en():
 
         with gr.Tab("3. Cut & Download"):
             a_out = gr.Audio(label="Cut Podcast", type="filepath", visible=False)
-            v_out = gr.Video(label="Cut Video", type="filepath", visible=False)
+            v_out = gr.Video(label="Cut Video", visible=False)
             d_info = gr.Markdown("")
 
         def on_process(audio_file, theme, prov, model, url, key, output_format):
